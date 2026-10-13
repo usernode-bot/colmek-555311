@@ -37,7 +37,7 @@
     --line: 217 224 232;      /* borders, dividers, unlit lamps */
     --accent: 29 78 216;      /* "signal blue": price marker, M1 line, focus */
     --on-accent: 255 255 255; /* text on the accent */
-    --go: 21 128 61;          /* green: Ready to Execute, support, confirmed */
+    --go: 22 101 52;          /* green: Ready to Execute, support, confirmed (dark enough for AA on ground) */
     --wait: 161 98 7;         /* yellow: Standby, watching */
     --stop: 185 28 28;        /* red: Invalid Zone, resistance, broken */
     --danger: 185 28 28;

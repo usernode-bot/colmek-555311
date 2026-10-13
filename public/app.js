@@ -61,6 +61,9 @@
   /* Class lookups — every entry a whole literal for the Tailwind scanner. */
   const CHIP = { go: 'chip chip-go', wait: 'chip chip-wait', stop: 'chip chip-stop', idle: 'chip chip-idle' };
   const TONE_TEXT = { go: 'text-go', wait: 'text-wait', stop: 'text-stop', idle: 'text-muted' };
+  // Whole literals: Tailwind purges @layer components whose class name never
+  // appears in the scanned files, so the lamp classes must be written out.
+  const LAMP = { go: 'lamp lamp-go', wait: 'lamp lamp-wait', stop: 'lamp lamp-stop' };
   const PILL = {
     go: 'status-pill status-pill-go',
     wait: 'status-pill status-pill-wait',
@@ -376,14 +379,24 @@
     el.status.className = PILL[b.tone];
   }
   function setPauseButton(paused) {
-    el.pauseIcon.hidden = paused;
-    el.resumeIcon.hidden = !paused;
+    // toggleAttribute, not `.hidden =`: the hidden IDL property exists on
+    // HTMLElement only, so on these SVGs it sets a JS expando and the CSS
+    // `[hidden]` rule never fires.
+    el.pauseIcon.toggleAttribute('hidden', paused);
+    el.resumeIcon.toggleAttribute('hidden', !paused);
     el.pauseLabel.textContent = paused ? 'Resume scan' : 'Pause scan';
   }
   function renderVote(agent, a) {
     const v = el.votes[agent];
-    const iconTone = a.tone === 'idle' ? 'wait' : a.tone;
-    ['go', 'wait', 'stop'].forEach((t) => { v.icons[t].hidden = t !== iconTone; });
+    // One icon shows with the status: check for go, clock for wait (muted
+    // while the agent is idle), cross for stop.
+    const shown = a.tone === 'idle' ? 'wait' : a.tone;
+    const shownClass = TONE_TEXT[a.tone];
+    ['go', 'wait', 'stop'].forEach((t) => {
+      const icon = v.icons[t];
+      icon.toggleAttribute('hidden', t !== shown); // see setPauseButton on .hidden
+      icon.setAttribute('class', t === shown ? shownClass : '');
+    });
     v.name.className = TONE_TEXT[a.tone];
     v.label.textContent = a.label;
     v.label.className = TONE_TEXT[a.tone];
@@ -394,7 +407,8 @@
   }
   function renderTerminal() {
     ['stop', 'wait', 'go'].forEach((t) => {
-      el.lamps[t].className = state.verdict && state.verdict.tone === t ? 'lamp lamp-' + t : 'lamp';
+      // Bottom green, middle yellow, top red; the unlit two stay in the line colour.
+      el.lamps[t].className = state.verdict && state.verdict.tone === t ? LAMP[t] : 'lamp';
     });
     el.verdict.textContent = state.verdict.word;
     el.verdict.className = 'text-title ' + TONE_TEXT[state.verdict.tone];
@@ -547,6 +561,8 @@
 
   /* ── Log ───────────────────────────────────────────────────────────── */
   function addLog(source, tone, text) {
+    // The first real line replaces the loading skeletons.
+    if (el.log.querySelector('.skeleton')) el.log.replaceChildren();
     const li = document.createElement('li');
     li.className = 'flex gap-2 py-1';
     li.dataset.tick = String(state.tick);
@@ -620,6 +636,17 @@
     if (state.timer) {
       clearInterval(state.timer);
       state.timer = null;
+    }
+  }
+  function runFirstTick() {
+    // Run the first tick before the timer starts, so the badge reading
+    // ACTIVE and the verdict never disagree: with the first tick 1.5 s
+    // away, the badge said ACTIVE while the verdict still said "Starting
+    // scan" and the agents showed their initial readings.
+    try {
+      tickOnce();
+    } catch (err) {
+      fail(err);
     }
   }
   function startTimer() {
@@ -719,15 +746,17 @@
       backdateLog();
     } else {
       addLog('SYSTEM', 'muted', 'Scan started on ' + state.pairKey + '.');
+      runFirstTick();
     }
-    startTimer();
+    if (!state.stopped) startTimer();
   }
 
   el.pair.addEventListener('change', () => {
     state.pairKey = el.pair.value;
     rebuild(Date.now());
     addLog('SYSTEM', 'muted', 'Scan restarted on ' + state.pairKey + '.');
-    startTimer();
+    runFirstTick();
+    if (!state.stopped) startTimer();
   });
   el.pauseBtn.addEventListener('click', () => {
     if (state.stopped) return;
@@ -737,7 +766,8 @@
   el.retry.addEventListener('click', () => {
     rebuild(Date.now());
     addLog('SYSTEM', 'muted', 'Scan restarted on ' + state.pairKey + '.');
-    startTimer();
+    runFirstTick();
+    if (!state.stopped) startTimer();
   });
 
   boot();
