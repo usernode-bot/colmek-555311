@@ -29,30 +29,36 @@
  */
 @layer base {
   :root {
-    --ground: 250 250 249;    /* the page */
+    --ground: 243 245 248;    /* the page: a cool chart-slate */
     --surface: 255 255 255;   /* lists, cards, fields */
-    --raised: 245 245 244;    /* hovers, badges */
-    --fg: 28 25 23;           /* text */
-    --muted: 87 83 78;        /* secondary text */
-    --line: 231 229 228;      /* borders, dividers, skeletons */
-    --accent: 15 118 110;     /* the one accent */
+    --raised: 234 238 243;    /* hovers, badges, lamp housing */
+    --fg: 15 23 42;           /* text */
+    --muted: 71 85 105;       /* secondary text */
+    --line: 217 224 232;      /* borders, dividers, unlit lamps */
+    --accent: 29 78 216;      /* "signal blue": price marker, M1 line, focus */
     --on-accent: 255 255 255; /* text on the accent */
+    --go: 21 128 61;          /* green: Ready to Execute, support, confirmed */
+    --wait: 161 98 7;         /* yellow: Standby, watching */
+    --stop: 185 28 28;        /* red: Invalid Zone, resistance, broken */
     --danger: 185 28 28;
     --on-danger: 255 255 255;
-    --focus: 13 148 136;      /* the keyboard focus ring */
+    --focus: 29 78 216;       /* the keyboard focus ring */
   }
   .dark {
-    --ground: 12 10 9;
-    --surface: 28 25 23;
-    --raised: 41 37 36;
-    --fg: 245 245 244;
-    --muted: 168 162 158;
-    --line: 68 64 60;
-    --accent: 45 212 191;
-    --on-accent: 4 47 46;
+    --ground: 8 13 23;
+    --surface: 17 24 39;
+    --raised: 30 41 59;
+    --fg: 226 232 240;
+    --muted: 148 163 184;
+    --line: 44 56 76;
+    --accent: 96 165 250;
+    --on-accent: 8 13 23;
+    --go: 74 222 128;
+    --wait: 250 204 21;
+    --stop: 248 113 113;
     --danger: 248 113 113;
     --on-danger: 69 10 10;
-    --focus: 94 234 212;
+    --focus: 96 165 250;
   }
   /* el.hidden = true hides an element even when a class gives it a display
      (flex, the components below). */
@@ -124,5 +130,52 @@
   .state-empty,
   .state-error {
     @apply flex flex-col items-center gap-2 px-4 py-8 text-center;
+  }
+
+  /* The consensus light's lamps: three stacked circles in a housing. The
+     unlit lamp sits in the line colour; a lit one takes its status colour
+     with a soft ring of the same colour. */
+  .lamp {
+    @apply h-9 w-9 rounded-full bg-line;
+  }
+  .lamp-go,
+  .lamp-wait,
+  .lamp-stop {
+    @apply rounded-full;
+  }
+  .lamp-go { background: rgb(var(--go)); box-shadow: 0 0 0 6px rgb(var(--go) / 0.18); }
+  .lamp-wait { background: rgb(var(--wait)); box-shadow: 0 0 0 6px rgb(var(--wait) / 0.18); }
+  .lamp-stop { background: rgb(var(--stop)); box-shadow: 0 0 0 6px rgb(var(--stop) / 0.18); }
+  @media (prefers-reduced-motion: no-preference) {
+    .lamp { transition: background-color 200ms ease, box-shadow 200ms ease; }
+  }
+
+  /* A status chip on an agent card, in the agent's status colour. */
+  .chip {
+    @apply ml-auto whitespace-nowrap rounded-full px-2.5 py-0.5 text-small font-semibold;
+  }
+  .chip-go { @apply bg-go/10 text-go; }
+  .chip-wait { @apply bg-wait/10 text-wait; }
+  .chip-stop { @apply bg-stop/10 text-stop; }
+  .chip-idle { @apply bg-raised text-muted; }
+
+  /* The header's system-status badge. The wording is the request's own
+     ("ACTIVE / SCANNING MARKET"), so it is the one uppercase text. */
+  .status-pill {
+    @apply inline-flex min-h-8 items-center gap-2 self-start rounded-full px-3 text-small font-semibold;
+  }
+  .status-pill::before {
+    content: '';
+    @apply h-2 w-2 rounded-full bg-current;
+  }
+  .status-pill-go { @apply bg-go/10 text-go; }
+  .status-pill-wait { @apply bg-wait/10 text-wait; }
+  .status-pill-stop { @apply bg-stop/10 text-stop; }
+  .status-pill-idle { @apply bg-raised text-muted; }
+
+  /* The M1 mini chart on Agent 3. */
+  .spark {
+    @apply block w-full rounded-lg bg-raised;
+    height: 72px;
   }
 }

@@ -52,6 +52,9 @@ module.exports = {
         line: token('line'), // borders, dividers, skeletons
         accent: token('accent'), // the one accent: the primary action
         'on-accent': token('on-accent'), // text on the accent
+        go: token('go'), // green: Ready to Execute, support zones, confirmed
+        wait: token('wait'), // yellow: Standby, watching
+        stop: token('stop'), // red: Invalid Zone, resistance zones, broken
         danger: token('danger'),
         'on-danger': token('on-danger'),
         focus: token('focus'), // the keyboard focus ring
@@ -62,6 +65,11 @@ module.exports = {
         body: ['1rem', { lineHeight: '1.5rem' }],
         heading: ['1.25rem', { lineHeight: '1.75rem', fontWeight: '600' }],
         title: ['1.75rem', { lineHeight: '2.25rem', fontWeight: '700' }],
+      },
+      // Only the activity log is monospace: it is the terminal's printout.
+      fontFamily: {
+        sans: ['system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        mono: ['ui-monospace', 'SF Mono', 'Menlo', 'Consolas', 'monospace'],
       },
     },
   },

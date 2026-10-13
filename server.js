@@ -147,6 +147,16 @@ app.use((req, res, next) => {
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
+// What the page needs to know before it boots: whether this visit should run
+// the staged demo (staging only, asked for with ?demo=1) and whether the
+// viewer is signed in. GET, so guests may read it.
+app.get('/api/session', (req, res) => {
+  res.json({
+    demo: IS_STAGING && req.query.demo === '1',
+    signedIn: !!req.user,
+  });
+});
+
 // The template ships no favicon file; index.html carries an inline SVG
 // icon instead. Answer 204 here so anything that still probes
 // /favicon.ico (older browsers, direct visits) doesn't fall through to
@@ -195,6 +205,16 @@ async function start() {
   const server = app.listen(port, () => console.log(`Listening on :${port}`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
+
+  // Shut down cleanly when the platform stops the container: stop taking
+  // connections, give the in-flight ones 3 s to drain, close the database
+  // pool, then exit.
+  const shutdown = () => {
+    server.close(() => process.exit(0));
+    setTimeout(() => { pool.end().finally(() => process.exit(0)); }, 3000).unref();
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 start().catch(err => { console.error(err); process.exit(1); });
