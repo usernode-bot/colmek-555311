@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  
+
   <script>
   // usernode-dev-console@1
   (function () {
@@ -26,8 +26,7 @@
             if (seen.has(val)) return '[Circular]';
             seen.add(val);
           }
-          if (typeof val === 'function') return '[Function ' + (val.name || 'anonymous') + ']';
-          if (val instanceof Error) return val.stack || (val.name + ': ' + val.message);
+          if (typeof val === 'function' && val.name !== 'anonymous') return '[Function ' + (v.name || 'anonymous') + ']';
           return val;
         });
       } catch (e) { try { return String(v); } catch (_) { return '[unserializable]'; } }
@@ -63,8 +62,8 @@
     try { post('info', ['[dev-console ready]'], { kind: 'ready' }); } catch (_) {}
   })();
   </script>
-  <title>colmek</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <title>AI Agent Trading SNR</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231d4ed8'/><line x1='20' y1='30' x2='80' y2='30' stroke='white' stroke-width='6' stroke-linecap='round'/><line x1='20' y1='70' x2='80' y2='70' stroke='white' stroke-width='6' stroke-linecap='round'/><line x1='50' y1='20' x2='50' y2='80' stroke='white' stroke-width='4' stroke-linecap='round'/><rect x='42' y='40' width='16' height='20' rx='3' fill='white'/></svg>">
   <!-- Tailwind, PRECOMPILED for this app (was cdn.tailwindcss.com's
        in-browser engine plus an inline tailwind.config here). The config
        moved to tailwind.config.js in the repo root; npm run build compiles
@@ -108,28 +107,175 @@
   </script>
 </head>
 <body class="min-h-screen bg-ground text-fg">
-  <!-- Built from the design kit in styles/tailwind-input.css: colour tokens
-       that are right in both looks, and components for buttons, fields,
-       lists, cards and data states. The real app keeps the kit; CLAUDE.md's
-       "## Design" says how. -->
-  <!-- (Named in prose on purpose: Tailwind compiles any class-name word in
-       these files, comments included, and the starter should ship only the
-       components its screen uses.) -->
-  <main class="mx-auto flex max-w-md flex-col gap-8 px-4 py-10">
+  <main class="mx-auto grid max-w-6xl gap-4 px-4 py-4 md:grid-cols-3">
 
-    <!-- usernode-starter-notice@1 — starter-template messaging. When building
-         the user's real app, replace this whole screen and delete this block,
-         both sentinel comments included. -->
-    <section class="card flex flex-col items-start gap-3">
-      <div class="flex h-20 w-20 items-center justify-center rounded-2xl border border-line bg-ground text-title">📈</div>
-      <span class="rounded-full bg-raised px-3 py-1 text-small font-medium text-muted">Starter template</span>
-      <h1 class="text-title">colmek</h1>
-      <p class="text-body text-muted">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-body text-muted">To change this app, ask Homeroom bot: tap the <strong class="font-semibold text-fg">Homeroom icon</strong>, then <strong class="font-semibold text-fg">Suggest an improvement</strong>. Describe what you'd like in plain English, and it will be turned into your real app.</p>
+    <!-- Header: the app mark, the title, the system status and the two
+         controls (pair, pause). The controls are secondary: the screen's
+         job is reading the market, not acting on it. -->
+    <header class="order-first flex flex-col gap-3 md:col-span-3 md:flex-row md:items-start md:justify-between">
+      <div class="flex flex-col gap-3">
+        <div class="flex items-start gap-2.5">
+          <div class="flex h-10 w-10 flex-none items-center justify-center rounded-lg border border-line bg-surface text-accent">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/><line x1="12" y1="3" x2="12" y2="21"/><rect x="9.5" y="9" width="5" height="6" rx="1"/></svg>
+          </div>
+          <h1 class="text-title">AI Agent Trading SNR - Zero Floating Dashboard</h1>
+        </div>
+        <span data-status class="status-pill status-pill-idle">STARTING</span>
+      </div>
+      <div class="flex flex-col items-stretch gap-2 sm:flex-row sm:items-end">
+        <div class="sm:flex-1">
+          <label for="pair" class="mb-1 block text-small text-muted">Pair</label>
+          <select id="pair" data-pair class="field">
+            <option value="XAUUSD">XAUUSD (Gold / US Dollar)</option>
+          </select>
+        </div>
+        <button type="button" data-pause class="btn-secondary">
+          <svg data-pause-icon width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><line x1="9" y1="6" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="18"/></svg>
+          <svg data-resume-icon hidden width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" aria-hidden="true"><polygon points="8 5 19 12 8 19"/></svg>
+          <span data-pause-label>Pause scan</span>
+        </button>
+      </div>
+    </header>
+
+    <p class="order-first rounded-lg bg-raised px-3 py-2 text-small text-muted md:col-span-3">
+      <b data-note-demo hidden class="font-semibold text-fg">Staging demo:</b>
+      <span data-note-body>Simulated XAUUSD prices, not a live market feed. Signals only, nothing is traded.</span>
+    </p>
+
+    <!-- Master Decision Terminal: the consensus light (the signature
+         element), the verdict, the price and the three agents' votes. On a
+         phone it comes first so the answer is on the first screen. -->
+    <section class="card order-1 flex flex-col gap-3 md:order-3 md:col-span-1" data-terminal>
+      <div class="flex items-baseline justify-between gap-2">
+        <h2 class="text-heading">Master Decision Terminal</h2>
+        <span data-terminal-meta class="text-small text-muted"></span>
+      </div>
+      <div data-sim-error class="state-error" hidden>
+        <p class="text-small">The market simulation stopped. The readings below are from <span data-error-time></span>.</p>
+        <button type="button" data-retry class="btn-secondary">Retry</button>
+      </div>
+      <div data-terminal-body>
+        <div class="flex items-center gap-4">
+          <div data-consensus-light class="flex flex-none flex-col gap-2 rounded-3xl border border-line bg-raised p-2" aria-hidden="true">
+            <span data-lamp="stop" class="lamp"></span>
+            <span data-lamp="wait" class="lamp"></span>
+            <span data-lamp="go" class="lamp"></span>
+          </div>
+          <div class="min-w-0">
+            <p data-verdict aria-live="polite" class="text-title text-muted">Starting scan</p>
+            <p data-reason class="text-small text-muted">Reading the market</p>
+            <div class="mt-1 flex items-baseline gap-2">
+              <b data-price class="text-heading">&mdash;</b>
+              <span data-price-note class="min-w-0 text-small text-muted"></span>
+            </div>
+          </div>
+        </div>
+        <div class="mt-4 grid grid-cols-3 gap-2 border-t border-line pt-3">
+          <div class="flex flex-col gap-0.5 text-small">
+            <span class="flex items-center gap-1 font-semibold">
+              <svg data-vote-icon="h1-go" hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="5 12 10 17 19 7"/></svg>
+              <svg data-vote-icon="h1-wait" hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><polyline points="12 8 12 12 15 14"/></svg>
+              <svg data-vote-icon="h1-stop" hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+              <span data-vote-name="h1" class="text-go">H1</span>
+            </span>
+            <span data-vote-label="h1" class="text-muted">Reading zones</span>
+          </div>
+          <div class="flex flex-col gap-0.5 text-small">
+            <span class="flex items-center gap-1 font-semibold">
+              <svg data-vote-icon="m30-go" hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="5 12 10 17 19 7"/></svg>
+              <svg data-vote-icon="m30-wait" hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><polyline points="12 8 12 12 15 14"/></svg>
+              <svg data-vote-icon="m30-stop" hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+              <span data-vote-name="m30" class="text-muted">M30</span>
+            </span>
+            <span data-vote-label="m30" class="text-muted">Waiting</span>
+          </div>
+          <div class="flex flex-col gap-0.5 text-small">
+            <span class="flex items-center gap-1 font-semibold">
+              <svg data-vote-icon="m1-go" hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="5 12 10 17 19 7"/></svg>
+              <svg data-vote-icon="m1-wait" hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><polyline points="12 8 12 12 15 14"/></svg>
+              <svg data-vote-icon="m1-stop" hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+              <span data-vote-name="m1" class="text-muted">M1</span>
+            </span>
+            <span data-vote-label="m1" class="text-muted">Waiting</span>
+          </div>
+        </div>
+      </div>
     </section>
-    <!-- /usernode-starter-notice@1 -->
 
-    <p class="text-center text-small text-muted">Built on Homeroom. This template screen disappears once you build your real app.</p>
+    <!-- The three parallel agents, one column each on a wide screen. -->
+    <section class="order-2 md:col-span-3">
+      <p class="section-label">Agents</p>
+      <div class="grid gap-3 md:grid-cols-3">
+
+        <article class="card" data-agent="h1">
+          <div class="mb-3 flex items-center gap-2.5">
+            <div class="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-raised text-fg" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/><line x1="3" y1="12" x2="21" y2="12" stroke-dasharray="2 3"/></svg>
+            </div>
+            <div class="min-w-0">
+              <p class="text-small text-muted">Agent 1</p>
+              <h3 class="text-heading">H1 Zone Mapper</h3>
+            </div>
+            <span data-chip class="chip chip-idle">Reading</span>
+          </div>
+          <ul data-ladder class="rounded-xl border border-line bg-surface"></ul>
+        </article>
+
+        <article class="card" data-agent="m30">
+          <div class="mb-3 flex items-center gap-2.5">
+            <div class="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-raised text-fg" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><line x1="3" y1="14" x2="21" y2="14"/><line x1="12" y1="3" x2="12" y2="21"/><rect x="9.5" y="5" width="5" height="7" rx="1"/></svg>
+            </div>
+            <div class="min-w-0">
+              <p class="text-small text-muted">Agent 2</p>
+              <h3 class="text-heading">M30 Sweep Hunter</h3>
+            </div>
+            <span data-chip class="chip chip-idle">Waiting</span>
+          </div>
+          <div data-reading class="space-y-2 text-small">
+            <p data-sentence class="text-fg">Watching for a wick at a zone.</p>
+          </div>
+          <dl data-facts class="mt-3 space-y-1.5 text-small"></dl>
+        </article>
+
+        <article class="card" data-agent="m1">
+          <div class="mb-3 flex items-center gap-2.5">
+            <div class="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-raised text-fg" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 8 9 12 18 16 9 21 6"/></svg>
+            </div>
+            <div class="min-w-0">
+              <p class="text-small text-muted">Agent 3</p>
+              <h3 class="text-heading">M1 Zero Floating Trigger</h3>
+            </div>
+            <span data-chip class="chip chip-idle">Waiting</span>
+          </div>
+          <svg data-spark class="spark" viewBox="0 0 300 72" preserveAspectRatio="none" role="img">
+            <title>Last 30 M1 prices with the current zone</title>
+            <rect data-spark-zone x="0" y="0" width="300" height="0" fill="rgb(var(--go) / 0.15)"/>
+            <polyline data-spark-line points="" fill="none" stroke="rgb(var(--accent))" stroke-width="2" stroke-linejoin="round"/>
+            <circle data-spark-dot r="3" fill="rgb(var(--accent))" visibility="hidden"/>
+          </svg>
+          <dl data-facts class="mt-3 space-y-1.5 text-small"></dl>
+        </article>
+
+      </div>
+    </section>
+
+    <!-- Activity log: the terminal's printout, newest first, latest 60. -->
+    <section class="card order-3 flex flex-col gap-2 md:order-4 md:col-span-2">
+      <div class="flex items-baseline justify-between gap-2">
+        <h2 class="text-heading">Activity log</h2>
+        <span class="text-small text-muted">Latest 60</span>
+      </div>
+      <ul data-log class="font-mono text-small md:max-h-96 md:overflow-y-auto">
+        <li class="flex gap-2 py-1"><span class="skeleton h-3 w-16 flex-none"></span><span class="skeleton h-3 w-14 flex-none"></span><span class="skeleton h-3 flex-1"></span></li>
+        <li class="flex gap-2 py-1"><span class="skeleton h-3 w-16 flex-none"></span><span class="skeleton h-3 w-14 flex-none"></span><span class="skeleton h-3 flex-1"></span></li>
+        <li class="flex gap-2 py-1"><span class="skeleton h-3 w-16 flex-none"></span><span class="skeleton h-3 w-14 flex-none"></span><span class="skeleton h-3 flex-1"></span></li>
+      </ul>
+    </section>
+
+    <p class="order-5 pb-6 pt-2 text-center text-small text-muted md:col-span-3">Simulated data. Not financial advice.</p>
   </main>
+  <script src="/app.js" defer></script>
 </body>
 </html>

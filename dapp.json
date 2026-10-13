@@ -6,5 +6,24 @@
   "secrets": [],
   "governance": {
     "preset": "you_or_the_group"
-  }
+  },
+  "tests": [
+    {
+      "id": "dashboard.loads",
+      "path": "/",
+      "expectSelector": "[data-consensus-light]"
+    },
+    {
+      "id": "dashboard.agents",
+      "path": "/",
+      "expectText": "M30 Sweep Hunter"
+    },
+    {
+      "id": "dashboard.demo",
+      "path": "/?demo=1",
+      "expectText": "Ready to Execute",
+      "visual": true,
+      "impact": ["public/**", "styles/**", "tailwind.config.js"]
+    }
+  ]
 }
