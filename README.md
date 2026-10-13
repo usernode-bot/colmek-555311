@@ -25,3 +25,6 @@ Claude Code against this repo directly; start with `CLAUDE.md`, which
 carries the app-specific notes and points at the platform rules.
 
 Once the real app exists, rewrite this README to describe it.
+
+The app icon and the featured icons for the Homeroom directory live in
+`brand/` (see `brand/ICON.md`).
