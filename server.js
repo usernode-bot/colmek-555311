@@ -147,6 +147,60 @@ app.use((req, res, next) => {
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
+// ── Live XAUUSD price ────────────────────────────────────────────────────
+// The dashboard's chart shows the real gold price, sampled here on the
+// server's own timer so the browser never calls the source and however many
+// people have the page open, the source sees one request per 30 s. The
+// buffer is a rolling one-hour window held in memory only: fine to lose on
+// restart, the chart just fills in again over the next minutes.
+const XAU_SOURCE_URL = 'https://api.gold-api.com/price/XAU';
+const XAU_SAMPLE_MS = 30_000;
+const XAU_MAX_POINTS = 120; // 120 × 30 s = one hour
+const XAU_STALE_MS = 120_000; // no good sample for 2 min ⇒ the feed is stale
+const xau = { points: [], lastOkAt: null, failing: false, timer: null };
+
+async function sampleXau() {
+  try {
+    const res = await fetch(XAU_SOURCE_URL, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    // Accept only a positive finite number: an HTML error page or a changed
+    // shape must not put garbage in the buffer.
+    const price = data && Number(data.price);
+    if (!Number.isFinite(price) || price <= 0) throw new Error('unexpected price shape');
+    xau.points.push({ t: new Date().toISOString(), p: Math.round(price * 100) / 100 });
+    if (xau.points.length > XAU_MAX_POINTS) xau.points.shift();
+    xau.lastOkAt = Date.now();
+    if (xau.failing) {
+      xau.failing = false;
+      console.warn('XAU price feed recovered.');
+    }
+  } catch (err) {
+    // Warn once when it starts failing and once when it recovers, so a long
+    // outage does not fill the log.
+    if (!xau.failing) {
+      xau.failing = true;
+      console.warn('XAU price feed failing: ' + err.message);
+    }
+  }
+}
+
+// Always answers 200, so a source outage never shows up as a failed request
+// in the browser console; `ok` says whether there is anything to show.
+app.get('/api/xau', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (xau.points.length === 0) {
+    return res.json({ ok: false, error: 'live_feed_unavailable', points: [] });
+  }
+  return res.json({
+    ok: true,
+    symbol: 'XAUUSD',
+    source: 'gold-api.com',
+    points: xau.points,
+    stale: xau.lastOkAt === null || Date.now() - xau.lastOkAt > XAU_STALE_MS,
+  });
+});
+
 // What the page needs to know before it boots: whether this visit should run
 // the staged demo (staging only, asked for with ?demo=1) and whether the
 // viewer is signed in. GET, so guests may read it.
@@ -206,10 +260,18 @@ async function start() {
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
 
+  // Start the live price sampler: one sample now so the chart has a point
+  // straight away, then one every 30 s. A read-only fetch with no side
+  // effect, so it runs in staging and production alike.
+  sampleXau();
+  xau.timer = setInterval(sampleXau, XAU_SAMPLE_MS);
+  xau.timer.unref();
+
   // Shut down cleanly when the platform stops the container: stop taking
   // connections, give the in-flight ones 3 s to drain, close the database
   // pool, then exit.
   const shutdown = () => {
+    if (xau.timer) clearInterval(xau.timer);
     server.close(() => process.exit(0));
     setTimeout(() => { pool.end().finally(() => process.exit(0)); }, 3000).unref();
   };

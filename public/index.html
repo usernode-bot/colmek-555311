@@ -139,7 +139,7 @@
 
     <p class="order-first rounded-lg bg-raised px-3 py-2 text-small text-muted md:col-span-3">
       <b data-note-demo hidden class="font-semibold text-fg">Staging demo:</b>
-      <span data-note-body>Simulated XAUUSD prices, not a live market feed. Signals only, nothing is traded.</span>
+      <span data-note-body>The Live XAUUSD price chart shows the real market. The agents and the decision terminal still run on simulated prices. Signals only, nothing is traded.</span>
     </p>
 
     <!-- Master Decision Terminal: the consensus light (the signature
@@ -199,6 +199,45 @@
             <span data-vote-label="m1" class="text-muted">Waiting</span>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- Live XAUUSD price: the real gold price from the server's sampler,
+         drawn as a bigger version of Agent 3's mini chart. In the DOM right
+         after the terminal, so on a phone it follows it (both order-1); on
+         md the terminal is order-3, so this card leads the screen. -->
+    <section class="card order-1 flex flex-col gap-2 md:order-1 md:col-span-3" data-live-chart>
+      <div class="flex items-baseline justify-between gap-2">
+        <h2 class="text-heading">Live XAUUSD price</h2>
+        <span data-live-updated class="text-small text-muted"></span>
+      </div>
+      <div data-live-priceline class="flex items-baseline gap-3" hidden>
+        <b data-live-price class="text-title"></b>
+        <span data-live-change class="min-w-0 text-small text-muted"></span>
+      </div>
+      <p data-live-paused class="text-small text-wait" hidden></p>
+      <svg data-live-svg class="live-chart" viewBox="0 0 1000 160" preserveAspectRatio="none" role="img" hidden>
+        <title>XAUUSD price over the last hour</title>
+        <polyline data-live-line points="" fill="none" stroke="rgb(var(--accent))" stroke-width="2" stroke-linejoin="round"/>
+        <circle data-live-dot r="4" fill="rgb(var(--accent))" visibility="hidden"/>
+      </svg>
+      <div data-live-axis class="flex items-baseline justify-between gap-2 text-small text-muted" hidden>
+        <span data-live-start></span>
+        <span data-live-range></span>
+        <span data-live-end></span>
+      </div>
+      <p data-live-collecting class="text-small text-muted" hidden>Collecting prices. The chart fills in over the next few minutes.</p>
+      <p data-live-source class="text-small text-muted">Source: gold-api.com, refreshed every 30 seconds</p>
+      <div data-live-loading>
+        <div class="flex items-baseline gap-3">
+          <span class="skeleton h-8 w-40"></span>
+          <span class="skeleton h-4 w-32"></span>
+        </div>
+        <div class="skeleton mt-3 h-40 w-full"></div>
+      </div>
+      <div data-live-error class="state-error" hidden>
+        <p class="text-small">The live gold price could not be loaded. The agents below keep running on simulated prices.</p>
+        <button type="button" data-live-retry class="btn-secondary">Retry</button>
       </div>
     </section>
 
@@ -274,7 +313,7 @@
       </ul>
     </section>
 
-    <p class="order-5 pb-6 pt-2 text-center text-small text-muted md:col-span-3">Simulated data. Not financial advice.</p>
+    <p class="order-5 pb-6 pt-2 text-center text-small text-muted md:col-span-3">Agents run on simulated prices. Not financial advice.</p>
   </main>
   <script src="/app.js" defer></script>
 </body>
