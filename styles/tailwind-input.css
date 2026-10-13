@@ -178,4 +178,14 @@
     @apply block w-full rounded-lg bg-raised;
     height: 72px;
   }
+
+  /* The live XAUUSD chart: the same look, bigger. 160 px tall on a wide
+     screen, 120 px below the md breakpoint. */
+  .live-chart {
+    @apply block w-full rounded-lg bg-raised;
+    height: 160px;
+  }
+  @media (max-width: 767px) {
+    .live-chart { height: 120px; }
+  }
 }

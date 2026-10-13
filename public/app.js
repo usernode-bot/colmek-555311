@@ -87,6 +87,7 @@
     resumeIcon: $('[data-resume-icon]'),
     pauseLabel: $('[data-pause-label]'),
     noteDemo: $('[data-note-demo]'),
+    noteBody: $('[data-note-body]'),
     terminalMeta: $('[data-terminal-meta]'),
     simError: $('[data-sim-error]'),
     errorTime: $('[data-error-time]'),
@@ -100,7 +101,13 @@
     votes: {},
     agents: {},
     log: $('[data-log]'),
+    live: {},
   };
+  [
+    'priceline', 'updated', 'price', 'change', 'paused', 'svg', 'line', 'dot',
+    'axis', 'start', 'range', 'end', 'collecting', 'source', 'loading', 'error',
+    'retry',
+  ].forEach((k) => { el.live[k] = $('[data-live-' + k + ']'); });
   document.querySelectorAll('[data-lamp]').forEach((n) => { el.lamps[n.dataset.lamp] = n; });
   ['h1', 'm30', 'm1'].forEach((a) => {
     const icons = {};
@@ -271,6 +278,9 @@
     renderM1Facts();
     drawSpark();
     writeTickLogs();
+    // In the staged demo the live card is drawn from the simulation, on
+    // every tick, so the visual test stays deterministic.
+    if (state.demo) renderLive(demoPoints(), { demo: true });
   }
 
   /* ── Agent 1: H1 Zone Mapper ───────────────────────────────────────── */
@@ -559,6 +569,142 @@
     }
   }
 
+  /* ── Live XAUUSD chart ────────────────────────────────────────────────
+   * The one live part of the screen: the real gold price, sampled by the
+   * server every 30 s and drawn as a bigger Agent 3 spark. Everything else
+   * on the dashboard stays on the simulated market, so the live price never
+   * touches state.price, the agents or the log. */
+  const live = { hadData: false, points: [], failing: false, timer: null };
+  let liveToken = null;
+
+  function demoPoints() {
+    // The staged demo draws the card from the simulation: the last 40 tick
+    // prices, spaced 1.5 s apart and ending now.
+    const pts = state.history.slice(-40);
+    const base = now().getTime();
+    return pts.map((p, i) => ({
+      t: new Date(base - (pts.length - 1 - i) * TICK_MS).toISOString(),
+      p,
+    }));
+  }
+
+  function renderLive(points, opts) {
+    opts = opts || {};
+    if (!points || points.length === 0) {
+      // No data ever arrived: the error state is the whole card body.
+      el.live.loading.hidden = true;
+      el.live.priceline.hidden = true;
+      el.live.paused.hidden = true;
+      // toggleAttribute, not `.hidden =`: the hidden IDL property exists on
+      // HTMLElement only, so on this SVG it would set a JS expando and the
+      // CSS `[hidden]` rule never fires (see setPauseButton).
+      el.live.svg.toggleAttribute('hidden', true);
+      el.live.axis.hidden = true;
+      el.live.collecting.hidden = true;
+      el.live.source.hidden = true;
+      el.live.error.hidden = false;
+      return;
+    }
+    el.live.error.hidden = true;
+    el.live.source.hidden = false;
+    el.live.source.textContent = opts.demo
+      ? 'Staging demo: simulated prices, not the live market.'
+      : 'Source: gold-api.com, refreshed every 30 seconds';
+    el.live.loading.hidden = true;
+    el.live.priceline.hidden = false;
+    el.live.svg.toggleAttribute('hidden', false);
+    el.live.axis.hidden = false;
+    const last = points[points.length - 1];
+    const first = points[0];
+    el.live.price.textContent = fmt(last.p);
+    el.live.updated.textContent = 'Updated ' + fmtTime(new Date(last.t));
+    if (points.length >= 2) {
+      const change = last.p - first.p;
+      el.live.change.textContent = (change < 0 ? '−' : '+') + fmt(Math.abs(change)) + ' in the last hour';
+    } else {
+      el.live.change.textContent = 'Collecting prices';
+    }
+    // Grey, not green or red: green and red already mean the agents'
+    // verdicts on this screen.
+    el.live.paused.textContent = 'Live feed paused. Last price from ' + fmtTime(new Date(last.t)) + '.';
+    el.live.paused.hidden = !opts.stale;
+    el.live.collecting.hidden = points.length >= 2;
+
+    let min = Infinity;
+    let max = -Infinity;
+    points.forEach((pt) => {
+      if (pt.p < min) min = pt.p;
+      if (pt.p > max) max = pt.p;
+    });
+    const low = min;
+    const high = max;
+    const pad = (max - min) * 0.1 || 1; // flat hour: the line sits mid-chart
+    min -= pad;
+    max += pad;
+    const H = 160;
+    const y = (p) => H - 4 - ((p - min) / (max - min)) * (H - 8);
+    const n = points.length;
+    if (n >= 2) {
+      const coords = points.map((pt, i) => ((i / (n - 1)) * 998 + 1).toFixed(1) + ',' + y(pt.p).toFixed(1));
+      el.live.line.setAttribute('points', coords.join(' '));
+      const lastPt = coords[n - 1].split(',');
+      el.live.dot.setAttribute('cx', lastPt[0]);
+      el.live.dot.setAttribute('cy', lastPt[1]);
+    } else {
+      el.live.line.setAttribute('points', '');
+      el.live.dot.setAttribute('cx', '999');
+      el.live.dot.setAttribute('cy', y(last.p).toFixed(1));
+    }
+    el.live.dot.setAttribute('visibility', 'visible');
+    el.live.start.textContent = hhmm(new Date(first.t));
+    el.live.end.textContent = hhmm(new Date(last.t));
+    el.live.range.textContent = 'Low ' + fmt(low) + ' · High ' + fmt(high);
+  }
+
+  function hhmm(d) {
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  async function loadLive() {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 6000);
+    let data = null;
+    try {
+      const res = await fetch('/api/xau', {
+        headers: liveToken ? { 'x-usernode-token': liveToken } : {},
+        signal: ctl.signal,
+      });
+      if (res.ok) data = await res.json();
+    } catch (_err) {
+      // Timed out or unreachable: handled below, warned once.
+    } finally {
+      clearTimeout(timer);
+    }
+    if (data && data.ok && Array.isArray(data.points) && data.points.length > 0) {
+      if (live.failing) {
+        live.failing = false;
+        console.warn('Live XAUUSD feed recovered.');
+      }
+      live.hadData = true;
+      live.points = data.points;
+      renderLive(live.points, { stale: !!data.stale });
+    } else if (live.hadData) {
+      // Prices were on screen before: keep the last chart and say the feed
+      // is paused, rather than dropping the card to an error.
+      if (!live.failing) {
+        live.failing = true;
+        console.warn('Live XAUUSD feed unavailable, showing the last chart.');
+      }
+      renderLive(live.points, { stale: true });
+    } else {
+      if (!live.failing) {
+        live.failing = true;
+        console.warn('Live XAUUSD feed unavailable.');
+      }
+      renderLive(null);
+    }
+  }
+
   /* ── Log ───────────────────────────────────────────────────────────── */
   function addLog(source, tone, text) {
     // The first real line replaces the loading skeletons.
@@ -711,6 +857,7 @@
   async function boot() {
     const params = new URLSearchParams(location.search);
     const token = params.get('token');
+    liveToken = token;
     let demo = false;
     try {
       const ctl = new AbortController();
@@ -729,7 +876,11 @@
       // the dashboard does not depend on it.
     }
     state.demo = demo;
-    if (demo) el.noteDemo.hidden = false;
+    if (demo) {
+      el.noteDemo.hidden = false;
+      // The staged demo view stays fully simulated, chart included.
+      el.noteBody.textContent = 'Simulated XAUUSD prices, not a live market feed. Signals only, nothing is traded.';
+    }
 
     buildPairOptions();
     rebuild(demo ? DEMO_SEED : Date.now());
@@ -749,6 +900,12 @@
       runFirstTick();
     }
     if (!state.stopped) startTimer();
+    // The live chart is the one real feed: fetch once now, then every 30 s,
+    // independently of the scan's pause, stop and retry.
+    if (!demo) {
+      loadLive();
+      live.timer = setInterval(loadLive, 30_000);
+    }
   }
 
   el.pair.addEventListener('change', () => {
@@ -769,6 +926,7 @@
     runFirstTick();
     if (!state.stopped) startTimer();
   });
+  el.live.retry.addEventListener('click', () => loadLive());
 
   boot();
 })();

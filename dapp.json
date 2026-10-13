@@ -19,6 +19,16 @@
       "expectText": "M30 Sweep Hunter"
     },
     {
+      "id": "dashboard.live-chart",
+      "path": "/",
+      "expectSelector": "[data-live-chart]"
+    },
+    {
+      "id": "dashboard.live-chart.demo",
+      "path": "/?demo=1",
+      "expectText": "Live XAUUSD price"
+    },
+    {
       "id": "dashboard.demo",
       "path": "/?demo=1",
       "expectText": "Ready to Execute",
