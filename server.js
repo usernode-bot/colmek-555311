@@ -150,38 +150,65 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // ── Live XAUUSD price ────────────────────────────────────────────────────
 // The dashboard's chart shows the real gold price, sampled here on the
 // server's own timer so the browser never calls the source and however many
-// people have the page open, the source sees one request per 30 s. The
+// people have the page open, the source sees one request per 10 s. The
 // buffer is a rolling one-hour window held in memory only: fine to lose on
 // restart, the chart just fills in again over the next minutes.
-const XAU_SOURCE_URL = 'https://api.gold-api.com/price/XAU';
-const XAU_SAMPLE_MS = 30_000;
-const XAU_MAX_POINTS = 120; // 120 × 30 s = one hour
+// Two keyless public sources, tried in order on every sample: the primary,
+// then PAX Gold on CoinGecko (a 1:1 gold-backed token, so its USD price
+// tracks spot within a fraction of a percent). A point may come from either,
+// which only shows as a small step on the sparkline for as long as the
+// fallback is in use.
+const XAU_SOURCES = [
+  {
+    label: 'gold-api.com',
+    url: 'https://api.gold-api.com/price/XAU',
+    parse: (data) => data && Number(data.price),
+  },
+  {
+    label: 'coingecko.com (pax-gold)',
+    url: 'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd',
+    parse: (data) => data && data['pax-gold'] && Number(data['pax-gold'].usd),
+  },
+];
+const XAU_SAMPLE_MS = 10_000;
+const XAU_MAX_POINTS = 360; // 360 × 10 s = one hour
 const XAU_STALE_MS = 120_000; // no good sample for 2 min ⇒ the feed is stale
-const xau = { points: [], lastOkAt: null, failing: false, timer: null };
+const xau = { points: [], source: null, lastOkAt: null, failing: false, timer: null };
+
+async function fetchXauPrice(source) {
+  const res = await fetch(source.url, { signal: AbortSignal.timeout(5000) });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  // Accept only a positive finite number: an HTML error page or a changed
+  // shape must not put garbage in the buffer.
+  const price = source.parse(data);
+  if (!Number.isFinite(price) || price <= 0) throw new Error('unexpected price shape');
+  return Math.round(price * 100) / 100;
+}
 
 async function sampleXau() {
-  try {
-    const res = await fetch(XAU_SOURCE_URL, { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    // Accept only a positive finite number: an HTML error page or a changed
-    // shape must not put garbage in the buffer.
-    const price = data && Number(data.price);
-    if (!Number.isFinite(price) || price <= 0) throw new Error('unexpected price shape');
-    xau.points.push({ t: new Date().toISOString(), p: Math.round(price * 100) / 100 });
-    if (xau.points.length > XAU_MAX_POINTS) xau.points.shift();
-    xau.lastOkAt = Date.now();
-    if (xau.failing) {
-      xau.failing = false;
-      console.warn('XAU price feed recovered.');
+  let lastErr = null;
+  for (const source of XAU_SOURCES) {
+    try {
+      const price = await fetchXauPrice(source);
+      xau.points.push({ t: new Date().toISOString(), p: price });
+      if (xau.points.length > XAU_MAX_POINTS) xau.points.shift();
+      xau.source = source.label;
+      xau.lastOkAt = Date.now();
+      if (xau.failing) {
+        xau.failing = false;
+        console.warn('XAU price feed recovered via ' + source.label + '.');
+      }
+      return;
+    } catch (err) {
+      lastErr = err; // fall through to the next source
     }
-  } catch (err) {
-    // Warn once when it starts failing and once when it recovers, so a long
-    // outage does not fill the log.
-    if (!xau.failing) {
-      xau.failing = true;
-      console.warn('XAU price feed failing: ' + err.message);
-    }
+  }
+  // Warn once when sampling starts failing on every source and once when it
+  // recovers, so a long outage does not fill the log.
+  if (!xau.failing) {
+    xau.failing = true;
+    console.warn('XAU price feed failing on all sources: ' + (lastErr && lastErr.message));
   }
 }
 
@@ -195,7 +222,7 @@ app.get('/api/xau', (_req, res) => {
   return res.json({
     ok: true,
     symbol: 'XAUUSD',
-    source: 'gold-api.com',
+    source: xau.source || XAU_SOURCES[0].label,
     points: xau.points,
     stale: xau.lastOkAt === null || Date.now() - xau.lastOkAt > XAU_STALE_MS,
   });

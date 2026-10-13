@@ -571,7 +571,7 @@
 
   /* ── Live XAUUSD chart ────────────────────────────────────────────────
    * The one live part of the screen: the real gold price, sampled by the
-   * server every 30 s and drawn as a bigger Agent 3 spark. Everything else
+   * server every 10 s and drawn as a bigger Agent 3 spark. Everything else
    * on the dashboard stays on the simulated market, so the live price never
    * touches state.price, the agents or the log. */
   const live = { hadData: false, points: [], failing: false, timer: null };
