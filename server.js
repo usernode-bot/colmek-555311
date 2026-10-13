@@ -173,7 +173,12 @@ const XAU_SOURCES = [
 const XAU_SAMPLE_MS = 10_000;
 const XAU_MAX_POINTS = 360; // 360 × 10 s = one hour
 const XAU_STALE_MS = 120_000; // no good sample for 2 min ⇒ the feed is stale
-const xau = { points: [], source: null, lastOkAt: null, failing: false, timer: null };
+const xau = {
+  points: [], source: null, lastOkAt: null, failing: false, timer: null,
+  // Why the last all-sources sample failed ("gold-api.com: HTTP 403; …"),
+  // for the /api/xau failure payload. Cleared on the next good sample.
+  lastError: null,
+};
 
 async function fetchXauPrice(source) {
   const res = await fetch(source.url, { signal: AbortSignal.timeout(5000) });
@@ -187,7 +192,7 @@ async function fetchXauPrice(source) {
 }
 
 async function sampleXau() {
-  let lastErr = null;
+  const errors = [];
   for (const source of XAU_SOURCES) {
     try {
       const price = await fetchXauPrice(source);
@@ -195,20 +200,26 @@ async function sampleXau() {
       if (xau.points.length > XAU_MAX_POINTS) xau.points.shift();
       xau.source = source.label;
       xau.lastOkAt = Date.now();
+      xau.lastError = null;
       if (xau.failing) {
         xau.failing = false;
         console.warn('XAU price feed recovered via ' + source.label + '.');
       }
       return;
     } catch (err) {
-      lastErr = err; // fall through to the next source
+      // Keep every source's reason, not only the last one: the browser shows
+      // this joined string in the error card, so "HTTP 403" without its
+      // source name would not say which feed broke.
+      errors.push(source.label + ': ' + (err && err.message ? err.message : String(err)));
     }
   }
+  const reason = errors.join('; ');
+  xau.lastError = { at: new Date().toISOString(), reason };
   // Warn once when sampling starts failing on every source and once when it
   // recovers, so a long outage does not fill the log.
   if (!xau.failing) {
     xau.failing = true;
-    console.warn('XAU price feed failing on all sources: ' + (lastErr && lastErr.message));
+    console.warn('XAU price feed failing on all sources: ' + reason);
   }
 }
 
@@ -217,7 +228,17 @@ async function sampleXau() {
 app.get('/api/xau', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   if (xau.points.length === 0) {
-    return res.json({ ok: false, error: 'live_feed_unavailable', points: [] });
+    // `reason` carries the actual failure (per source, e.g. "gold-api.com:
+    // HTTP 403; coingecko.com (pax-gold): HTTP 429") so an outage in the
+    // staging preview is diagnosable from the card instead of a bare
+    // "could not be loaded". The fallback covers the first seconds after a
+    // container boot, before any sample has tried a source.
+    return res.json({
+      ok: false,
+      error: 'live_feed_unavailable',
+      reason: xau.lastError ? xau.lastError.reason : 'waiting for the first sample',
+      points: [],
+    });
   }
   return res.json({
     ok: true,
@@ -288,7 +309,7 @@ async function start() {
   server.keepAliveTimeout = 75_000;
 
   // Start the live price sampler: one sample now so the chart has a point
-  // straight away, then one every 30 s. A read-only fetch with no side
+  // straight away, then one every 10 s. A read-only fetch with no side
   // effect, so it runs in staging and production alike.
   sampleXau();
   xau.timer = setInterval(sampleXau, XAU_SAMPLE_MS);
