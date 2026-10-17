@@ -1,8 +1,11 @@
-/* AI Agent Trading SNR — the simulation engine.
+/* AI Agent Trading SNR — the scan engine.
  *
- * Everything on the dashboard runs here in the browser: the price, the three
- * agents and the master verdict come from a scripted simulation, never from a
- * market feed. It reads prices, it never places, sends or executes a trade.
+ * The dashboard runs here in the browser. In a live scan the price is the
+ * real market quote from the server feed (/api/xau, sampling gold-api.com) —
+ * the same feed the Live XAUUSD card draws. The three agents and the master
+ * verdict read that live price. It reads prices, it never places, sends or
+ * executes a trade. The staged demo (?demo=1) keeps a fully scripted
+ * simulation.
  *
  * Class names below are whole literals on purpose: the Tailwind build scans
  * this file with a regex, so a class assembled at runtime would never be
@@ -24,7 +27,8 @@
         { name: 'H1 resistance', tf: 'H1', kind: 'resistance', low: 2362.0, high: 2364.5 },
         { name: 'H4 resistance', tf: 'H4', kind: 'resistance', low: 2371.0, high: 2373.5 },
       ],
-      // The scripted path: price eases toward each leg's target, plus noise
+      // The scripted path (staged demo only): price eases toward each leg's
+      // target, plus noise
       // of up to ±0.35 per tick. One loop sets up a buy at support; the next
       // mirrors it as a sell at resistance, then breaks below support, so
       // all three verdicts and both directions appear within about four
@@ -249,23 +253,41 @@
 
   /* ── One tick ──────────────────────────────────────────────────────── */
   function tickOnce() {
-    state.tick += 1;
-    const legs = state.pair.legs[state.legLoop % 2];
-    if (state.legTick === 0) state.from = state.price == null ? state.pair.legs[0][0].to + 9.8 : state.price;
-    const leg = legs[state.legIndex];
-    state.legTick += 1;
-    const t = state.legTick / leg.ticks;
-    const noise = state.rng() * 0.7 - 0.35;
-    state.price = state.from + (leg.to - state.from) * t + noise;
-    state.history.push(state.price);
-    if (state.history.length > 120) state.history.shift();
-    if (state.legTick >= leg.ticks) {
-      state.legIndex += 1;
-      state.legTick = 0;
-      if (state.legIndex >= legs.length) {
-        state.legIndex = 0;
-        state.legLoop += 1;
+    if (state.demo) {
+      // Staged demo: the fully scripted path, untouched.
+      state.tick += 1;
+      const legs = state.pair.legs[state.legLoop % 2];
+      if (state.legTick === 0) state.from = state.price == null ? state.pair.legs[0][0].to + 9.8 : state.price;
+      const leg = legs[state.legIndex];
+      state.legTick += 1;
+      const t = state.legTick / leg.ticks;
+      const noise = state.rng() * 0.7 - 0.35;
+      state.price = state.from + (leg.to - state.from) * t + noise;
+      state.history.push(state.price);
+      if (state.history.length > 120) state.history.shift();
+      if (state.legTick >= leg.ticks) {
+        state.legIndex += 1;
+        state.legTick = 0;
+        if (state.legIndex >= legs.length) {
+          state.legIndex = 0;
+          state.legLoop += 1;
+        }
       }
+    } else {
+      // Live scan: the tick's price is the latest real quote from the same
+      // server feed the Live XAUUSD card uses (/api/xau, gold-api.com).
+      // A tick with no feed data yet, or no new price since the last one,
+      // is a no-op: the agents only re-read when the market moved, and the
+      // 1.5 s timer keeps the ACTIVE badge and pause/resume honest between
+      // the feed's 10 s samples.
+      const pts = live.points;
+      const p = pts.length ? pts[pts.length - 1].p : null;
+      if (p == null || p === state.price) return;
+      if (state.price == null) addLog('SYSTEM', 'muted', 'Live price connected: ' + fmt(p) + '.');
+      state.price = p;
+      state.history.push(p);
+      if (state.history.length > 120) state.history.shift();
+      state.tick += 1;
     }
 
     state.h1 = evalH1(state.price, state.h1);
@@ -575,10 +597,11 @@
   }
 
   /* ── Live XAUUSD chart ────────────────────────────────────────────────
-   * The one live part of the screen: the real gold price, sampled by the
-   * server every 10 s and drawn as a bigger Agent 3 spark. Everything else
-   * on the dashboard stays on the simulated market, so the live price never
-   * touches state.price, the agents or the log. */
+   * The real gold price, sampled by the server every 10 s and drawn as a
+   * bigger Agent 3 spark. In a live scan its latest quote IS the market:
+   * tickOnce reads it into state.price, so the agents and the master
+   * verdict price off the same feed the card draws. The staged demo draws
+   * this card from the simulation instead. */
   const live = { hadData: false, points: [], failing: false, timer: null };
   let liveToken = null;
 
@@ -891,6 +914,8 @@
       el.noteDemo.hidden = false;
       // The staged demo view stays fully simulated, chart included.
       el.noteBody.textContent = 'Simulated XAUUSD prices, not a live market feed. Signals only, nothing is traded.';
+      const foot = document.querySelector('[data-footer-note]');
+      if (foot) foot.textContent = 'Agents run on simulated prices. Analysis only, nothing is traded. Not financial advice.';
     }
 
     buildPairOptions();
@@ -911,11 +936,12 @@
       runFirstTick();
     }
     if (!state.stopped) startTimer();
-    // The live chart is the one real feed: fetch once now, then every 30 s,
+    // The live feed drives both the chart and the agents in a live scan:
+    // fetch once now, then every 10 s (matching the server's own sampling),
     // independently of the scan's pause, stop and retry.
     if (!demo) {
       loadLive();
-      live.timer = setInterval(loadLive, 30_000);
+      live.timer = setInterval(loadLive, 10_000);
     }
   }
 
@@ -924,6 +950,7 @@
     rebuild(Date.now());
     addLog('SYSTEM', 'muted', 'Scan restarted on ' + state.pairKey + '.');
     runFirstTick();
+    if (!state.demo) loadLive(); // a fresh quote for the restarted scan
     if (!state.stopped) startTimer();
   });
   el.pauseBtn.addEventListener('click', () => {
@@ -935,6 +962,7 @@
     rebuild(Date.now());
     addLog('SYSTEM', 'muted', 'Scan restarted on ' + state.pairKey + '.');
     runFirstTick();
+    if (!state.demo) loadLive(); // a fresh quote for the restarted scan
     if (!state.stopped) startTimer();
   });
   el.live.retry.addEventListener('click', () => loadLive());
