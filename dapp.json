@@ -20,6 +20,11 @@
       "expectText": "M30 Sweep Hunter"
     },
     {
+      "id": "dashboard.zones-current",
+      "path": "/",
+      "expectText": "4,128.00 – 4,133.00"
+    },
+    {
       "id": "dashboard.agent3-m5",
       "path": "/",
       "expectText": "M5 Zero Floating Trigger"
