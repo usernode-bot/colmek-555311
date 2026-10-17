@@ -1,6 +1,7 @@
 {
   "description": "A dark-mode dashboard for SNR forex trading signals",
   "icon": {
+    "image": "brand/icon.png",
     "emoji": "📈"
   },
   "secrets": [],
