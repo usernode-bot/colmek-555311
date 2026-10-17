@@ -712,6 +712,14 @@
    * this card from the simulation instead. */
   const live = { hadData: false, points: [], failing: false, timer: null };
   let liveToken = null;
+  // The tick self-reschedules: 10 s when the feed is healthy, a short
+  // backoff (1 s, 2 s, 4 s) while it is down, so a blip is ridden out
+  // before the card gives up and shows its Retry button.
+  const LIVE_TICK_MS = 10_000;
+  const LIVE_RETRY_DELAYS = [1000, 2000, 4000];
+  let liveBusy = false; // one fetch at a time
+  let liveRetryIdx = 0; // next automatic retry's delay
+  let liveRetryQueued = false; // someone hit Retry while a fetch was in flight
 
   function demoPoints() {
     // The staged demo draws the card from the simulation: the last 40 tick
@@ -726,6 +734,9 @@
 
   function renderLive(points, opts) {
     opts = opts || {};
+    // Whatever the outcome, the fetch is over: the Retry button reads
+    // "Checking…" while one is in flight and is back to "Retry" here.
+    setLiveRetryBusy(false);
     if (!points || points.length === 0) {
       // No data ever arrived: the error state is the whole card body.
       el.live.loading.hidden = true;
@@ -805,7 +816,34 @@
     return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
   }
 
+  // The card's checking state: the same skeletons the page boots with, so a
+  // retry reads as "working on it" instead of a button that does nothing.
+  function renderLiveChecking() {
+    el.live.error.hidden = true;
+    el.live.priceline.hidden = true;
+    el.live.svg.toggleAttribute('hidden', true);
+    el.live.axis.hidden = true;
+    el.live.collecting.hidden = true;
+    el.live.source.hidden = true;
+    el.live.updated.textContent = '';
+    el.live.loading.hidden = false;
+  }
+
+  function setLiveRetryBusy(busy) {
+    el.live.retry.disabled = busy;
+    el.live.retry.textContent = busy ? 'Checking…' : 'Retry';
+  }
+
+  // The single scheduler for feed fetches: a self-rescheduling timeout, so
+  // the healthy 10 s cadence and the retry backoff can never pile up.
+  function scheduleLiveTick(delay) {
+    clearTimeout(live.timer);
+    live.timer = setTimeout(loadLive, delay);
+  }
+
   async function loadLive() {
+    if (liveBusy) return;
+    liveBusy = true;
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 6000);
     let data = null;
@@ -817,8 +855,15 @@
       if (res.ok) data = await res.json();
     } catch (_err) {
       // Timed out or unreachable: handled below, warned once.
-    } finally {
-      clearTimeout(timer);
+    }
+    clearTimeout(timer);
+    liveBusy = false;
+    if (liveRetryQueued) {
+      // A Retry click arrived while this fetch was in flight: run it now,
+      // so the retry chain can never be left unscheduled.
+      liveRetryQueued = false;
+      scheduleLiveTick(0);
+      return;
     }
     if (data && data.ok && Array.isArray(data.points) && data.points.length > 0) {
       if (live.failing) {
@@ -827,16 +872,30 @@
       }
       live.hadData = true;
       live.points = data.points;
+      liveRetryIdx = 0;
       renderLive(live.points, { stale: !!data.stale });
-    } else if (live.hadData) {
-      // Prices were on screen before: keep the last chart and say the feed
-      // is paused, rather than dropping the card to an error.
+      scheduleLiveTick(LIVE_TICK_MS);
+      return;
+    }
+    // The feed is down. Prices were on screen before? Keep the last chart
+    // and say the feed is paused, rather than dropping the card to an
+    // error: that last good price is the display fallback until a source
+    // answers again.
+    if (live.hadData) {
       if (!live.failing) {
         live.failing = true;
         console.warn('Live XAUUSD feed unavailable, showing the last chart.');
       }
       renderLive(live.points, { stale: true });
-    } else {
+    }
+    if (liveRetryIdx < LIVE_RETRY_DELAYS.length) {
+      // Not all automatic retries are spent yet: wait out the next short
+      // delay and try again. While nothing was ever on screen, the
+      // skeletons say the card is still working on it.
+      scheduleLiveTick(LIVE_RETRY_DELAYS[liveRetryIdx]);
+      liveRetryIdx += 1;
+      if (!live.hadData) renderLiveChecking();
+    } else if (!live.hadData) {
       if (!live.failing) {
         live.failing = true;
         console.warn('Live XAUUSD feed unavailable.');
@@ -844,7 +903,28 @@
       renderLive(null, {
         reason: data && !data.ok && data.reason ? data.reason : 'the price feed is unreachable',
       });
+      scheduleLiveTick(LIVE_TICK_MS);
+    } else {
+      // Stale chart on screen, retries spent: fall back to the steady
+      // cadence until the feed recovers.
+      scheduleLiveTick(LIVE_TICK_MS);
     }
+  }
+
+  // A retry the person asked for: spend none of the automatic backoff, say
+  // the card is checking, and fetch straight away. While a fetch is already
+  // in flight, queue one for the moment it settles instead of dropping it.
+  function retryLive() {
+    if (state.demo) return; // the demo runs on the simulation, no feed to retry
+    liveRetryIdx = 0;
+    if (liveBusy) {
+      liveRetryQueued = true;
+      return;
+    }
+    clearTimeout(live.timer);
+    setLiveRetryBusy(true);
+    renderLiveChecking();
+    loadLive();
   }
 
   /* ── Log ───────────────────────────────────────────────────────────── */
@@ -1045,12 +1125,9 @@
     }
     if (!state.stopped) startTimer();
     // The live feed drives both the chart and the agents in a live scan:
-    // fetch once now, then every 10 s (matching the server's own sampling),
-    // independently of the scan's pause, stop and retry.
-    if (!demo) {
-      loadLive();
-      live.timer = setInterval(loadLive, 10_000);
-    }
+    // loadLive reschedules itself (10 s when healthy, short backoff while
+    // the feed is down), independently of the scan's pause, stop and retry.
+    if (!demo) loadLive();
   }
 
   el.pair.addEventListener('change', () => {
@@ -1058,7 +1135,7 @@
     rebuild(Date.now());
     addLog('SYSTEM', 'muted', 'Scan restarted on ' + state.pairKey + '.');
     runFirstTick();
-    if (!state.demo) loadLive(); // a fresh quote for the restarted scan
+    retryLive(); // a fresh quote for the restarted scan
     if (!state.stopped) startTimer();
   });
   el.pauseBtn.addEventListener('click', () => {
@@ -1070,10 +1147,10 @@
     rebuild(Date.now());
     addLog('SYSTEM', 'muted', 'Scan restarted on ' + state.pairKey + '.');
     runFirstTick();
-    if (!state.demo) loadLive(); // a fresh quote for the restarted scan
+    retryLive(); // a fresh quote for the restarted scan
     if (!state.stopped) startTimer();
   });
-  el.live.retry.addEventListener('click', () => loadLive());
+  el.live.retry.addEventListener('click', () => retryLive());
 
   boot();
 })();

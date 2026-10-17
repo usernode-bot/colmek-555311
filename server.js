@@ -153,11 +153,11 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // people have the page open, the source sees one request per 10 s. The
 // buffer is a rolling one-hour window held in memory only: fine to lose on
 // restart, the chart just fills in again over the next minutes.
-// Two keyless public sources, tried in order on every sample: the primary,
-// then PAX Gold on CoinGecko (a 1:1 gold-backed token, so its USD price
-// tracks spot within a fraction of a percent). A point may come from either,
-// which only shows as a small step on the sparkline for as long as the
-// fallback is in use.
+// Three keyless public sources, tried in order on every sample: the primary,
+// then PAX Gold on CoinGecko, then PAXG/USDT on Binance (PAX Gold is a 1:1
+// gold-backed token, so its price tracks spot within a fraction of a
+// percent). A point may come from any of them, which only shows as a small
+// step on the sparkline for as long as a fallback is in use.
 const XAU_SOURCES = [
   {
     label: 'gold-api.com',
@@ -168,6 +168,11 @@ const XAU_SOURCES = [
     label: 'coingecko.com (pax-gold)',
     url: 'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd',
     parse: (data) => data && data['pax-gold'] && Number(data['pax-gold'].usd),
+  },
+  {
+    label: 'binance.com (paxg-usdt)',
+    url: 'https://api.binance.com/api/v3/ticker/price?symbol=PAXGUSDT',
+    parse: (data) => data && Number(data.price),
   },
 ];
 const XAU_SAMPLE_MS = 10_000;
