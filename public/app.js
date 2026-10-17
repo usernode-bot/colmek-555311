@@ -22,10 +22,10 @@
       label: 'XAUUSD (Gold / US Dollar)',
       digits: 2,
       zones: [
-        { name: 'H4 support', tf: 'H4', kind: 'support', low: 2329.0, high: 2331.5 },
-        { name: 'H1 support', tf: 'H1', kind: 'support', low: 2338.5, high: 2341.0 },
-        { name: 'H1 resistance', tf: 'H1', kind: 'resistance', low: 2362.0, high: 2364.5 },
-        { name: 'H4 resistance', tf: 'H4', kind: 'resistance', low: 2371.0, high: 2373.5 },
+        { name: 'H4 support', tf: 'H4', kind: 'support', low: 4100.0, high: 4105.0 },
+        { name: 'H1 support', tf: 'H1', kind: 'support', low: 4128.0, high: 4133.0 },
+        { name: 'H1 resistance', tf: 'H1', kind: 'resistance', low: 4177.0, high: 4182.0 },
+        { name: 'H4 resistance', tf: 'H4', kind: 'resistance', low: 4195.0, high: 4200.0 },
       ],
       // The scripted path (staged demo only): price eases toward each leg's
       // target, plus noise
@@ -35,24 +35,24 @@
       // minutes. Each loop ends where the next begins.
       legs: [
         [
-          { to: 2340.2, ticks: 12 }, // drifts down into H1 support
-          { to: 2336.9, ticks: 4 }, // sweeps 1.60 below the far edge
-          { to: 2342.0, ticks: 4 }, // the V back inside — green buy setup
-          { to: 2342.6, ticks: 8 }, // holds just above the zone
-          { to: 2351.0, ticks: 8 }, // leaves the zone
-          { to: 2363.4, ticks: 12 }, // climbs into H1 resistance
-          { to: 2368.2, ticks: 5 }, // breaks out 3.70 above — red
-          { to: 2352.0, ticks: 10 }, // falls back mid-range
+          { to: 4131.4, ticks: 12 }, // drifts down into H1 support
+          { to: 4126.4, ticks: 4 }, // sweeps 1.60 below the far edge
+          { to: 4134.0, ticks: 4 }, // the V back inside — green buy setup
+          { to: 4134.6, ticks: 8 }, // holds just above the zone
+          { to: 4155.0, ticks: 8 }, // leaves the zone
+          { to: 4179.8, ticks: 12 }, // climbs into H1 resistance
+          { to: 4185.7, ticks: 5 }, // breaks out 3.70 above — red
+          { to: 4156.0, ticks: 10 }, // falls back mid-range
         ],
         [
-          { to: 2363.4, ticks: 12 }, // climbs into H1 resistance
-          { to: 2365.9, ticks: 4 }, // sweeps 1.40 above the far edge
-          { to: 2360.8, ticks: 4 }, // the V back down — green sell setup
-          { to: 2360.2, ticks: 8 }, // holds just below the zone
-          { to: 2351.0, ticks: 8 }, // leaves the zone
-          { to: 2340.2, ticks: 12 }, // falls into H1 support
-          { to: 2333.0, ticks: 5 }, // breaks down 5.50 below — red
-          { to: 2350.0, ticks: 10 }, // recovers mid-range
+          { to: 4179.8, ticks: 12 }, // climbs into H1 resistance
+          { to: 4183.4, ticks: 4 }, // sweeps 1.40 above the far edge
+          { to: 4175.8, ticks: 4 }, // the V back down — green sell setup
+          { to: 4175.2, ticks: 8 }, // holds just below the zone
+          { to: 4155.0, ticks: 8 }, // leaves the zone
+          { to: 4131.4, ticks: 12 }, // falls into H1 support
+          { to: 4122.5, ticks: 5 }, // breaks down 5.50 below — red
+          { to: 4154.0, ticks: 10 }, // recovers mid-range
         ],
       ],
     },
@@ -367,7 +367,7 @@
     return { tone: 'idle', label: 'No zone', zone: null, extreme: null, beyond: 0 };
   }
 
-  /* ── Agent 3: M1 Zero Floating Trigger ─────────────────────────────── */
+  /* ── Agent 3: M5 Zero Floating Trigger ─────────────────────────────── */
   function evalM1(price, m30) {
     if (m30.tone !== 'go' || !state.episode) {
       return { tone: 'idle', label: 'Waiting', zone: null, extreme: null, entry: null, recovery: 0 };
@@ -405,7 +405,7 @@
     let reason;
     if (h1.tone !== 'go') reason = 'Near ' + h1.zone.name + ' — no setup yet';
     else if (m30.tone === 'wait') reason = 'At ' + h1.zone.name + ' — watching for a sweep';
-    else reason = 'Sweep found — waiting for the M1 V-shape';
+    else reason = 'Sweep found — waiting for the M5 V-shape';
     return { tone: 'wait', word: 'Standby', reason };
   }
 
@@ -768,7 +768,7 @@
     const lines = [
       ['H1', state.h1Prev, state.h1, describeH1],
       ['M30', state.m30Prev, state.m30, describeM30],
-      ['M1', state.m1Prev, state.m1, describeM1],
+      ['M5', state.m1Prev, state.m1, describeM1],
     ];
     lines.forEach(([source, prev, cur, describe]) => {
       if (prev && (prev.tone !== cur.tone || prev.label !== cur.label)) {

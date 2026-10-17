@@ -35,7 +35,7 @@
     --fg: 15 23 42;           /* text */
     --muted: 71 85 105;       /* secondary text */
     --line: 217 224 232;      /* borders, dividers, unlit lamps */
-    --accent: 29 78 216;      /* "signal blue": price marker, M1 line, focus */
+    --accent: 29 78 216;      /* "signal blue": price marker, M5 line, focus */
     --on-accent: 255 255 255; /* text on the accent */
     --go: 22 101 52;          /* green: Ready to Execute, support, confirmed (dark enough for AA on ground) */
     --wait: 161 98 7;         /* yellow: Standby, watching */
@@ -173,7 +173,7 @@
   .status-pill-stop { @apply bg-stop/10 text-stop; }
   .status-pill-idle { @apply bg-raised text-muted; }
 
-  /* The M1 mini chart on Agent 3. */
+  /* The M5 mini chart on Agent 3. */
   .spark {
     @apply block w-full rounded-lg bg-raised;
     height: 72px;
