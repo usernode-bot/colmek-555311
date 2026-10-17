@@ -106,8 +106,13 @@
   [
     'priceline', 'updated', 'price', 'change', 'paused', 'svg', 'line', 'dot',
     'axis', 'start', 'range', 'end', 'collecting', 'source', 'loading', 'error',
-    'retry',
-  ].forEach((k) => { el.live[k] = $('[data-live-' + k + ']'); });
+    'error-reason', 'retry',
+  ].forEach((k) => {
+    // Dash keys bind under their camelCase name ('error-reason' becomes
+    // el.live.errorReason), so the render code never reads a dashed key.
+    const name = k.replace(/-([a-z])/g, (_m, c) => c.toUpperCase());
+    el.live[name] = $('[data-live-' + k + ']');
+  });
   document.querySelectorAll('[data-lamp]').forEach((n) => { el.lamps[n.dataset.lamp] = n; });
   ['h1', 'm30', 'm1'].forEach((a) => {
     const icons = {};
@@ -602,6 +607,10 @@
       el.live.axis.hidden = true;
       el.live.collecting.hidden = true;
       el.live.source.hidden = true;
+      // Why the feed has nothing to show ("gold-api.com: HTTP 403; …"),
+      // from the server's sampler via /api/xau, so an outage is
+      // diagnosable from the card instead of only in the server log.
+      el.live.errorReason.textContent = opts.reason || '';
       el.live.error.hidden = false;
       return;
     }
@@ -609,7 +618,7 @@
     el.live.source.hidden = false;
     el.live.source.textContent = opts.demo
       ? 'Staging demo: simulated prices, not the live market.'
-      : 'Source: gold-api.com, refreshed every 30 seconds';
+      : 'Source: gold-api.com, refreshed every 10 seconds';
     el.live.loading.hidden = true;
     el.live.priceline.hidden = false;
     el.live.svg.toggleAttribute('hidden', false);
@@ -701,7 +710,9 @@
         live.failing = true;
         console.warn('Live XAUUSD feed unavailable.');
       }
-      renderLive(null);
+      renderLive(null, {
+        reason: data && !data.ok && data.reason ? data.reason : 'the price feed is unreachable',
+      });
     }
   }
 

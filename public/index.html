@@ -227,7 +227,7 @@
         <span data-live-end></span>
       </div>
       <p data-live-collecting class="text-small text-muted" hidden>Collecting prices. The chart fills in over the next few minutes.</p>
-      <p data-live-source class="text-small text-muted">Source: gold-api.com, refreshed every 30 seconds</p>
+      <p data-live-source class="text-small text-muted">Source: gold-api.com, refreshed every 10 seconds</p>
       <div data-live-loading>
         <div class="flex items-baseline gap-3">
           <span class="skeleton h-8 w-40"></span>
@@ -237,6 +237,7 @@
       </div>
       <div data-live-error class="state-error" hidden>
         <p class="text-small">The live gold price could not be loaded. The agents below keep running on simulated prices.</p>
+        <p class="text-small text-muted" data-live-error-reason></p>
         <button type="button" data-live-retry class="btn-secondary">Retry</button>
       </div>
     </section>
