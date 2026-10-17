@@ -4,7 +4,7 @@
   "emoji": "📈",
   "tagline": "A dark-mode dashboard for SNR forex trading signals",
   "points": [
-    "Three agents scan H1, M30 and M1 charts together",
+    "Three agents scan H1, M30 and M5 charts together",
     "Pick a forex pair, XAUUSD by default",
     "Green, yellow or red light shows if a trade is ready",
     "Live log of price moves and each agent's decision"

@@ -367,7 +367,7 @@
     return { tone: 'idle', label: 'No zone', zone: null, extreme: null, beyond: 0 };
   }
 
-  /* ── Agent 3: M1 Zero Floating Trigger ─────────────────────────────── */
+  /* ── Agent 3: M5 Zero Floating Trigger ─────────────────────────────── */
   function evalM1(price, m30) {
     if (m30.tone !== 'go' || !state.episode) {
       return { tone: 'idle', label: 'Waiting', zone: null, extreme: null, entry: null, recovery: 0 };
@@ -405,7 +405,7 @@
     let reason;
     if (h1.tone !== 'go') reason = 'Near ' + h1.zone.name + ' — no setup yet';
     else if (m30.tone === 'wait') reason = 'At ' + h1.zone.name + ' — watching for a sweep';
-    else reason = 'Sweep found — waiting for the M1 V-shape';
+    else reason = 'Sweep found — waiting for the M5 V-shape';
     return { tone: 'wait', word: 'Standby', reason };
   }
 
@@ -768,7 +768,7 @@
     const lines = [
       ['H1', state.h1Prev, state.h1, describeH1],
       ['M30', state.m30Prev, state.m30, describeM30],
-      ['M1', state.m1Prev, state.m1, describeM1],
+      ['M5', state.m1Prev, state.m1, describeM1],
     ];
     lines.forEach(([source, prev, cur, describe]) => {
       if (prev && (prev.tone !== cur.tone || prev.label !== cur.label)) {

@@ -20,6 +20,11 @@
       "expectText": "M30 Sweep Hunter"
     },
     {
+      "id": "dashboard.agent3-m5",
+      "path": "/",
+      "expectText": "M5 Zero Floating Trigger"
+    },
+    {
       "id": "dashboard.live-chart",
       "path": "/",
       "expectSelector": "[data-live-chart]"
