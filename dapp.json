@@ -17,7 +17,7 @@
     {
       "id": "dashboard.agents",
       "path": "/",
-      "expectText": "M30 Sweep Hunter"
+      "expectText": "Trendline & SNR Mapper"
     },
     {
       "id": "dashboard.zones-current",

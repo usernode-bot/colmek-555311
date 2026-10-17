@@ -217,7 +217,7 @@
     state.lastPriceLog = null;
     state.startedAt = now().getTime();
     state.h1 = { tone: 'stop', label: 'Mid-range', zone: null, beyond: 0, near: 0 };
-    state.m30 = { tone: 'idle', label: 'No zone', zone: null, extreme: null, beyond: 0 };
+    state.m30 = { tone: 'idle', label: 'No level', zone: null, extreme: null, beyond: 0 };
     state.m1 = { tone: 'idle', label: 'Waiting', zone: null, extreme: null, entry: null, recovery: 0 };
     state.paused = false;
     state.stopped = false;
@@ -238,7 +238,7 @@
       renderChip(a, state[a]);
     });
     renderLadder();
-    el.agents.m30.sentence.textContent = 'No H1 zone under watch yet.';
+    el.agents.m30.sentence.textContent = 'Reading the live feed for trendlines and levels.';
     renderFacts(el.agents.m30.facts, []);
     renderFacts(el.agents.m1.facts, []);
     drawSpark();
@@ -339,7 +339,13 @@
     return out;
   }
 
-  /* ── Agent 2: M30 Sweep Hunter ─────────────────────────────────────── */
+  /* ── Agent 2: Trendline & SNR Mapper ─────────────────────────────────
+   * Reads the same price history the live feed fills: swing highs and
+   * swing lows fit two trendlines whose slopes give the trend direction,
+   * and clustered swings become the mapped support/resistance levels.
+   * While Agent 1 sits at a zone, the mapper tracks the test of that
+   * level (the episode below): the pierce extreme and the return inside
+   * are what Agent 3 times its V-shape on. */
   function evalM30(price, h1) {
     if (h1.tone === 'go') {
       const z = h1.zone;
@@ -356,15 +362,112 @@
       }
       if (inside(z, price)) ep.backInside = true;
       if (ep.backInside && ep.extremeBeyond >= 0.5 && ep.extremeBeyond <= 3.0) {
-        return { tone: 'go', label: 'Sweep found', zone: z, extreme: ep.extreme, beyond: ep.extremeBeyond };
+        return { tone: 'go', label: 'Level held', zone: z, extreme: ep.extreme, beyond: ep.extremeBeyond };
       }
-      return { tone: 'wait', label: 'Watching', zone: z, extreme: ep.extreme, beyond: ep.extremeBeyond };
+      return { tone: 'wait', label: 'Testing level', zone: z, extreme: ep.extreme, beyond: ep.extremeBeyond };
     }
-    state.episode = null; // leaving the zone resets the episode, and agent 3
+    state.episode = null; // leaving the level resets the test, and agent 3
     if (h1.label === 'Zone broken') {
-      return { tone: 'stop', label: 'Breakout', zone: h1.zone, extreme: null, beyond: h1.beyond };
+      return { tone: 'stop', label: 'Level broken', zone: h1.zone, extreme: null, beyond: h1.beyond };
     }
-    return { tone: 'idle', label: 'No zone', zone: null, extreme: null, beyond: 0 };
+    return { tone: 'idle', label: 'No level', zone: null, extreme: null, beyond: 0 };
+  }
+
+  /* The mapper's map, drawn from the same history: how the trend is read
+   * and where the nearest mapped levels sit around the current price. */
+  const SWING_K = 2;       // neighbours each side a pivot must dominate
+  const SWING_PROM = 0.6;  // how far a pivot must stand clear of them
+  const LEVEL_TOL = 1.5;   // swings within this of each other share a level
+
+  function findSwings(history) {
+    // Fractal pivots: a high the k neighbours on both sides stay below
+    // (and stand clear of by the prominence), mirrored for lows.
+    const highs = [];
+    const lows = [];
+    for (let i = SWING_K; i < history.length - SWING_K; i++) {
+      let clearHigh = true;
+      let clearLow = true;
+      let aroundHigh = -Infinity;
+      let aroundLow = Infinity;
+      for (let j = i - SWING_K; j <= i + SWING_K; j++) {
+        if (j === i) continue;
+        if (history[j] >= history[i]) clearHigh = false;
+        if (history[j] <= history[i]) clearLow = false;
+        if (history[j] > aroundHigh) aroundHigh = history[j];
+        if (history[j] < aroundLow) aroundLow = history[j];
+      }
+      if (clearHigh && history[i] - aroundHigh >= SWING_PROM) highs.push({ i: i, p: history[i] });
+      if (clearLow && aroundLow - history[i] >= SWING_PROM) lows.push({ i: i, p: history[i] });
+    }
+    return { highs: highs, lows: lows };
+  }
+
+  function clusterLevels(points, tol) {
+    // Swings close in price merge into one mapped level (their average).
+    const sorted = points.slice().sort(function (a, b) { return a.p - b.p; });
+    const groups = [];
+    let group = null;
+    sorted.forEach(function (pt) {
+      if (group && pt.p - group.anchor <= tol) group.pts.push(pt);
+      else { group = { anchor: pt.p, pts: [pt] }; groups.push(group); }
+    });
+    return groups.map(function (g) {
+      return {
+        level: g.pts.reduce(function (s, p) { return s + p.p; }, 0) / g.pts.length,
+      };
+    });
+  }
+
+  function mapSNR() {
+    const history = state.history;
+    const out = { trend: 'Mapping', support: null, resistance: null };
+    if (history.length < 8 || state.price == null) return out;
+    const swings = findSwings(history);
+    // Two trendlines: one through the recent swing highs, one through the
+    // recent swing lows. Both rising is an uptrend, both falling a
+    // downtrend, anything else a range.
+    let trend = 'Mapping';
+    if (swings.highs.length >= 2 && swings.lows.length >= 2) {
+      const prevHigh = swings.highs[swings.highs.length - 2];
+      const lastHigh = swings.highs[swings.highs.length - 1];
+      const prevLow = swings.lows[swings.lows.length - 2];
+      const lastLow = swings.lows[swings.lows.length - 1];
+      const resSlope = (lastHigh.p - prevHigh.p) / (lastHigh.i - prevHigh.i);
+      const supSlope = (lastLow.p - prevLow.p) / (lastLow.i - prevLow.i);
+      if (resSlope > 0 && supSlope > 0) trend = 'Uptrend';
+      else if (resSlope < 0 && supSlope < 0) trend = 'Downtrend';
+      else trend = 'Range';
+    } else {
+      // Not enough swings yet: fit one trendline straight through the
+      // recent prices (least squares over the last 30) and read its slope.
+      const recent = history.slice(-30);
+      const n = recent.length;
+      const ym = recent.reduce(function (s, p) { return s + p; }, 0) / n;
+      let num = 0;
+      let den = 0;
+      recent.forEach(function (p, i) {
+        num += (i - (n - 1) / 2) * (p - ym);
+        den += (i - (n - 1) / 2) * (i - (n - 1) / 2);
+      });
+      const slope = num / den;
+      if (slope > 0.05) trend = 'Uptrend';
+      else if (slope < -0.05) trend = 'Downtrend';
+      else trend = 'Range';
+    }
+    out.trend = trend;
+    // Clustered swings are the mapped levels. A level flips roles once
+    // price crosses it: a swing-high cluster below price now acts as
+    // support, a swing-low cluster above it as resistance.
+    const levels = clusterLevels(swings.lows, LEVEL_TOL).concat(clusterLevels(swings.highs, LEVEL_TOL));
+    levels.forEach(function (lv) {
+      if (lv.level <= state.price && (!out.support || lv.level > out.support.level)) {
+        out.support = { level: lv.level, dist: state.price - lv.level };
+      }
+      if (lv.level >= state.price && (!out.resistance || lv.level < out.resistance.level)) {
+        out.resistance = { level: lv.level, dist: lv.level - state.price };
+      }
+    });
+    return out;
   }
 
   /* ── Agent 3: M5 Zero Floating Trigger ─────────────────────────────── */
@@ -397,15 +500,15 @@
     }
     if (h1.tone === 'stop' || m30.tone === 'stop') {
       let reason;
-      if (m30.tone === 'stop') reason = 'Breakout ' + fmt(m30.beyond) + ' beyond ' + m30.zone.name;
+      if (m30.tone === 'stop') reason = 'Level broken, ' + fmt(m30.beyond) + ' beyond ' + m30.zone.name;
       else if (h1.label === 'Zone broken') reason = 'H1 zone broken, no valid setup';
       else reason = 'Price mid-range, no valid zone';
       return { tone: 'stop', word: 'Invalid Zone', reason };
     }
     let reason;
-    if (h1.tone !== 'go') reason = 'Near ' + h1.zone.name + ' — no setup yet';
-    else if (m30.tone === 'wait') reason = 'At ' + h1.zone.name + ' — watching for a sweep';
-    else reason = 'Sweep found — waiting for the M5 V-shape';
+    if (h1.tone !== 'go') reason = 'Near ' + h1.zone.name + ', no setup yet';
+    else if (m30.tone === 'wait') reason = 'At ' + h1.zone.name + ', watching the level test';
+    else reason = 'Level held, waiting for the M5 V-shape';
     return { tone: 'wait', word: 'Standby', reason };
   }
 
@@ -523,22 +626,27 @@
   }
   function renderM30() {
     const m = state.m30;
+    const map = mapSNR();
     let sentence;
-    const rows = [['Zone', m.zone ? m.zone.name + ' ' + fmt(m.zone.low) + ' – ' + fmt(m.zone.high) : '—']];
+    const rows = [];
+    if (m.zone) {
+      rows.push(['Tested level', m.zone.name + ' ' + fmt(m.zone.low) + ' – ' + fmt(m.zone.high)]);
+      if (m.extreme != null) rows.push([m.zone.kind === 'support' ? 'Wick low' : 'Wick high', fmt(m.extreme)]);
+    }
     if (m.tone === 'go') {
-      const buy = m.zone.kind === 'support';
-      sentence = 'Liquidity swept ' + (buy ? 'below' : 'above') + ' ' + fmt(edge(m.zone)) + ' — price is back inside.';
-      rows.push([buy ? 'Sweep low' : 'Sweep high', fmt(m.extreme)]);
+      sentence = (m.zone.kind === 'support' ? 'Support' : 'Resistance') + ' held at ' + m.zone.name + ', price is back inside.';
     } else if (m.tone === 'wait') {
       sentence = m.beyond > 0
-        ? 'Pierced ' + fmt(edge(m.zone)) + ' — waiting for the return inside.'
+        ? 'Pierced ' + fmt(edge(m.zone)) + ', waiting for the return inside.'
         : 'Watching ' + fmt(m.zone.kind === 'support' ? m.zone.high : m.zone.low) + ' at ' + m.zone.name + '.';
-      if (m.extreme != null) rows.push([m.zone.kind === 'support' ? 'Sweep low' : 'Sweep high', fmt(m.extreme)]);
     } else if (m.tone === 'stop') {
-      sentence = 'Breakout ' + fmt(m.beyond) + ' beyond ' + m.zone.name + ' — zone invalid.';
+      sentence = 'Price is ' + fmt(m.beyond) + ' beyond ' + m.zone.name + ', the level broke.';
     } else {
-      sentence = 'No H1 zone under watch.';
+      sentence = 'No level under test. The map updates from the live feed.';
     }
+    rows.push(['Trend', map.trend]);
+    rows.push(['Nearest support', map.support ? fmt(map.support.level) + ' · ' + fmt(map.support.dist) + ' away' : '—']);
+    rows.push(['Nearest resistance', map.resistance ? fmt(map.resistance.level) + ' · ' + fmt(map.resistance.dist) + ' away' : '—']);
     el.agents.m30.sentence.textContent = sentence;
     renderFacts(el.agents.m30.facts, rows);
   }
@@ -767,7 +875,7 @@
     // Agent lines only when that agent's status changes.
     const lines = [
       ['H1', state.h1Prev, state.h1, describeH1],
-      ['M30', state.m30Prev, state.m30, describeM30],
+      ['SNR', state.m30Prev, state.m30, describeM30],
       ['M5', state.m1Prev, state.m1, describeM1],
     ];
     lines.forEach(([source, prev, cur, describe]) => {
@@ -802,7 +910,7 @@
   function describeM30(a) {
     let s = a.label;
     if (a.zone) s += ' at ' + a.zone.name;
-    if (a.extreme != null) s += ', extreme ' + fmt(a.extreme);
+    if (a.extreme != null) s += ', wick ' + fmt(a.extreme);
     return s;
   }
   function describeM1(a) {
