@@ -139,7 +139,7 @@
 
     <p class="order-first rounded-lg bg-raised px-3 py-2 text-small text-muted md:col-span-3">
       <b data-note-demo hidden class="font-semibold text-fg">Staging demo:</b>
-      <span data-note-body>The Live XAUUSD price chart shows the real market. The agents and the decision terminal still run on simulated prices. Signals only, nothing is traded.</span>
+      <span data-note-body>The Live XAUUSD price chart shows the real market, and the agents and the decision terminal read the same live price. Signals only, nothing is traded.</span>
     </p>
 
     <!-- Master Decision Terminal: the consensus light (the signature
@@ -151,7 +151,7 @@
         <span data-terminal-meta class="text-small text-muted"></span>
       </div>
       <div data-sim-error class="state-error" hidden>
-        <p class="text-small">The market simulation stopped. The readings below are from <span data-error-time></span>.</p>
+        <p class="text-small">The scan stopped. The readings below are from <span data-error-time></span>.</p>
         <button type="button" data-retry class="btn-secondary">Retry</button>
       </div>
       <div data-terminal-body>
@@ -227,7 +227,7 @@
         <span data-live-end></span>
       </div>
       <p data-live-collecting class="text-small text-muted" hidden>Collecting prices. The chart fills in over the next few minutes.</p>
-      <p data-live-source class="text-small text-muted">Source: gold-api.com, refreshed every 30 seconds</p>
+      <p data-live-source class="text-small text-muted">Source: gold-api.com, refreshed every 10 seconds</p>
       <div data-live-loading>
         <div class="flex items-baseline gap-3">
           <span class="skeleton h-8 w-40"></span>
@@ -236,7 +236,8 @@
         <div class="skeleton mt-3 h-40 w-full"></div>
       </div>
       <div data-live-error class="state-error" hidden>
-        <p class="text-small">The live gold price could not be loaded. The agents below keep running on simulated prices.</p>
+        <p class="text-small">The live gold price could not be loaded. The agents wait for the feed before they read the market.</p>
+        <p class="text-small text-muted" data-live-error-reason></p>
         <button type="button" data-live-retry class="btn-secondary">Retry</button>
       </div>
     </section>
@@ -313,7 +314,7 @@
       </ul>
     </section>
 
-    <p class="order-5 pb-6 pt-2 text-center text-small text-muted md:col-span-3">Agents run on simulated prices. Not financial advice.</p>
+    <p data-footer-note class="order-5 pb-6 pt-2 text-center text-small text-muted md:col-span-3">Agents read the live XAUUSD price feed. Analysis only, nothing is traded. Not financial advice.</p>
   </main>
   <script src="/app.js" defer></script>
 </body>
