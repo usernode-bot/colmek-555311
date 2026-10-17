@@ -44,7 +44,15 @@
       "path": "/?demo=1",
       "expectText": "Ready to Execute",
       "visual": true,
-      "impact": ["public/**", "styles/**", "tailwind.config.js"]
+      "impact": [
+        "public/**",
+        "styles/**",
+        "tailwind.config.js"
+      ]
     }
-  ]
+  ],
+  "visibility": {
+    "build": "public",
+    "view": "public"
+  }
 }
