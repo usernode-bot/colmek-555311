@@ -418,15 +418,66 @@
     });
   }
 
+  function trendFromFit(history) {
+    // Interim trend while the swings are still forming: a least-squares
+    // line through the most recent prices (the last 30 at most) read by
+    // its slope.
+    const recent = history.slice(-30);
+    const n = recent.length;
+    if (n < 2) return 'Mapping';
+    const ym = recent.reduce(function (s, p) { return s + p; }, 0) / n;
+    let num = 0;
+    let den = 0;
+    recent.forEach(function (p, i) {
+      num += (i - (n - 1) / 2) * (p - ym);
+      den += (i - (n - 1) / 2) * (i - (n - 1) / 2);
+    });
+    const slope = num / den;
+    if (slope > 0.05) return 'Uptrend';
+    if (slope < -0.05) return 'Downtrend';
+    return 'Range';
+  }
+
+  function bootstrapLevels(price) {
+    // The interim map before the history holds swings: the static SNR
+    // zones from the config (Agent 1's H4/H1 support and resistance)
+    // stand in as the mapped levels. Every zone edge is a candidate, so
+    // a zone price has crossed flips roles on its own: its edges below
+    // price act as support, above as resistance.
+    let support = null;
+    let resistance = null;
+    state.pair.zones.forEach(function (z) {
+      [z.low, z.high].forEach(function (level) {
+        if (level <= price && (!support || level > support.level)) {
+          support = { level: level, dist: price - level };
+        }
+        if (level >= price && (!resistance || level < resistance.level)) {
+          resistance = { level: level, dist: level - price };
+        }
+      });
+    });
+    return { support: support, resistance: resistance };
+  }
+
   function mapSNR() {
     const history = state.history;
     const out = { trend: 'Mapping', support: null, resistance: null };
-    if (history.length < 8 || state.price == null) return out;
+    if (state.price == null) return out;
+    if (history.length < 8) {
+      // Too little history for swings: the map bootstraps from the static
+      // zones, with the trend read off a straight fit through what is here.
+      out.trend = trendFromFit(history);
+      const boot = bootstrapLevels(state.price);
+      out.support = boot.support;
+      out.resistance = boot.resistance;
+      return out;
+    }
     const swings = findSwings(history);
     // Two trendlines: one through the recent swing highs, one through the
     // recent swing lows. Both rising is an uptrend, both falling a
-    // downtrend, anything else a range.
-    let trend = 'Mapping';
+    // downtrend, anything else a range. Not enough swings yet: the same
+    // straight fit through the recent prices stands in.
+    let trend;
     if (swings.highs.length >= 2 && swings.lows.length >= 2) {
       const prevHigh = swings.highs[swings.highs.length - 2];
       const lastHigh = swings.highs[swings.highs.length - 1];
@@ -438,21 +489,7 @@
       else if (resSlope < 0 && supSlope < 0) trend = 'Downtrend';
       else trend = 'Range';
     } else {
-      // Not enough swings yet: fit one trendline straight through the
-      // recent prices (least squares over the last 30) and read its slope.
-      const recent = history.slice(-30);
-      const n = recent.length;
-      const ym = recent.reduce(function (s, p) { return s + p; }, 0) / n;
-      let num = 0;
-      let den = 0;
-      recent.forEach(function (p, i) {
-        num += (i - (n - 1) / 2) * (p - ym);
-        den += (i - (n - 1) / 2) * (i - (n - 1) / 2);
-      });
-      const slope = num / den;
-      if (slope > 0.05) trend = 'Uptrend';
-      else if (slope < -0.05) trend = 'Downtrend';
-      else trend = 'Range';
+      trend = trendFromFit(history);
     }
     out.trend = trend;
     // Clustered swings are the mapped levels. A level flips roles once
@@ -467,6 +504,11 @@
         out.resistance = { level: lv.level, dist: lv.level - state.price };
       }
     });
+    // Any side the swings have not mapped yet keeps its bootstrap level
+    // from the static zones until enough swings cluster there.
+    const boot = bootstrapLevels(state.price);
+    if (!out.support) out.support = boot.support;
+    if (!out.resistance) out.resistance = boot.resistance;
     return out;
   }
 
