@@ -131,6 +131,7 @@
   el.agents.h1.ladder = $('[data-agent="h1"] [data-ladder]');
   el.agents.m30.sentence = $('[data-agent="m30"] [data-sentence]');
   el.agents.m1.sparkZone = $('[data-spark-zone]');
+  el.agents.m1.sparkArea = $('[data-spark-area]');
   el.agents.m1.sparkLine = $('[data-spark-line]');
   el.agents.m1.sparkDot = $('[data-spark-dot]');
 
@@ -219,6 +220,7 @@
     state.h1 = { tone: 'stop', label: 'Mid-range', zone: null, beyond: 0, near: 0 };
     state.m30 = { tone: 'idle', label: 'No level', zone: null, extreme: null, beyond: 0 };
     state.m1 = { tone: 'idle', label: 'Waiting', zone: null, extreme: null, entry: null, recovery: 0 };
+    state.map = { trend: 'Mapping', support: null, resistance: null };
     state.paused = false;
     state.stopped = false;
     el.simError.hidden = true;
@@ -292,7 +294,10 @@
 
     state.h1 = evalH1(state.price, state.h1);
     state.m30 = evalM30(state.price, state.h1);
-    state.m1 = evalM1(state.price, state.m30);
+    // Agent 2's map, read once per tick: Agent 3's scalp areas and the
+    // card's trend rows must come off the same reading.
+    state.map = mapSNR();
+    state.m1 = evalM1(state.price, state.m30, state.map);
     state.verdict = evalMaster(state.h1, state.m30, state.m1);
 
     renderTerminal();
@@ -512,9 +517,60 @@
     return out;
   }
 
-  /* ── Agent 3: M5 Zero Floating Trigger ─────────────────────────────── */
-  function evalM1(price, m30) {
+  /* ── Agent 3: M5 Zero Floating Trigger ───────────────────────────────
+   * The trigger itself is unchanged: during a level test it watches the
+   * wick and times the V-shape. What is new is what it does while it
+   * would otherwise only wait: off Agent 2's mapped SNR levels and trend
+   * it marks a thin scalping area at the trend's level — a small buffer
+   * band off the level's edge, never the level itself — a buy above the
+   * nearest support in an uptrend, a sell below the nearest resistance
+   * in a downtrend, nothing in a range. The stop and target distances
+   * scale off the distance to that level, clamped to scalping size.
+   * Analysis only: nothing here places or executes a trade. */
+  const SCALP_BUF = 0.3;                                    // the band starts this far off the level's edge
+  const SCALP_BAND = { share: 0.25, min: 0.4, max: 1.2 };   // band height, off the SNR distance
+  const SCALP_STOP = { share: 0.3, min: 0.5, max: 2.0 };    // stop distance, off the SNR distance
+  const SCALP_TARGET = { share: 0.6, min: 1.0, max: 3.0 };  // target distance, off the SNR distance
+
+  function scalpSize(dist, size) {
+    return Math.min(size.max, Math.max(size.min, dist * size.share));
+  }
+
+  function buildScalp(lv, dir) {
+    const band = scalpSize(lv.dist, SCALP_BAND);
+    const stopDist = scalpSize(lv.dist, SCALP_STOP);
+    const targetDist = scalpSize(lv.dist, SCALP_TARGET);
+    const low = dir === 'Buy' ? lv.level + SCALP_BUF : lv.level - SCALP_BUF - band;
+    const high = dir === 'Buy' ? lv.level + SCALP_BUF + band : lv.level - SCALP_BUF;
+    const entry = (low + high) / 2; // mid-area: where a limit resting in the band sits
+    return {
+      dir: dir,
+      areaLow: low,
+      areaHigh: high,
+      entry: entry,
+      stop: dir === 'Buy' ? lv.level - stopDist : lv.level + stopDist,
+      target: dir === 'Buy' ? entry + targetDist : entry - targetDist,
+    };
+  }
+
+  function scalpArea(map) {
+    if (map.trend === 'Uptrend' && map.support) return buildScalp(map.support, 'Buy');
+    if (map.trend === 'Downtrend' && map.resistance) return buildScalp(map.resistance, 'Sell');
+    return null; // a range, or no mapped level on the trend's side: nothing to mark
+  }
+
+  function evalM1(price, m30, map) {
     if (m30.tone !== 'go' || !state.episode) {
+      // No level under test: instead of only waiting, mark the trend's
+      // thin scalping area off the mapped SNR level, if there is one.
+      const scalp = scalpArea(map);
+      if (scalp) {
+        return {
+          tone: 'wait',
+          label: scalp.dir === 'Buy' ? 'Thin buy area' : 'Thin sell area',
+          zone: null, extreme: null, entry: scalp.entry, recovery: 0, scalp: scalp,
+        };
+      }
       return { tone: 'idle', label: 'Waiting', zone: null, extreme: null, entry: null, recovery: 0 };
     }
     const z = state.episode.zone;
@@ -668,7 +724,7 @@
   }
   function renderM30() {
     const m = state.m30;
-    const map = mapSNR();
+    const map = state.map || mapSNR(); // the map tickOnce read, so the card and Agent 3 agree
     let sentence;
     const rows = [];
     if (m.zone) {
@@ -694,18 +750,25 @@
   }
   function renderM1Facts() {
     const m = state.m1;
-    if (m.tone === 'idle' || m.extreme == null) {
-      renderFacts(el.agents.m1.facts, []);
-      return;
+    const rows = [];
+    if (m.scalp) {
+      // The thin scalping area, marked while no level is under test.
+      rows.push(['Area', fmt(m.scalp.areaLow) + ' – ' + fmt(m.scalp.areaHigh)]);
+      rows.push(['Direction', m.scalp.dir]);
+      rows.push(['Entry', fmt(m.scalp.entry)]);
+      rows.push(['Stop', fmt(m.scalp.stop)]);
+      rows.push(['Target', fmt(m.scalp.target)]);
     }
-    const z = m.zone;
-    const wick = Math.max(0, Math.round(beyondFar(z, m.extreme) - 0.68));
-    const wickTxt = fmt(wick);
-    renderFacts(el.agents.m1.facts, [
-      ['Wick', wickTxt],
-      ['Entry', fmt(m.entry)],
-      ['Recovery', fmt(m.recovery)],
-    ]);
+    if (m.tone !== 'idle' && m.extreme != null && m.zone) {
+      // The level test the trigger is timing (the rows above never coexist
+      // with these: the area is marked only outside a test).
+      const z = m.zone;
+      const wick = Math.max(0, Math.round(beyondFar(z, m.extreme) - 0.68));
+      rows.push(['Wick', fmt(wick)]);
+      rows.push(['Entry', fmt(m.entry)]);
+      rows.push(['Recovery', fmt(m.recovery)]);
+    }
+    renderFacts(el.agents.m1.facts, rows);
   }
   function drawSpark() {
     const svg = el.agents.m1;
@@ -714,6 +777,7 @@
       svg.sparkLine.setAttribute('points', '');
       svg.sparkDot.setAttribute('visibility', 'hidden');
       svg.sparkZone.setAttribute('height', '0');
+      svg.sparkArea.setAttribute('height', '0');
       return;
     }
     const z = state.h1.zone;
@@ -743,6 +807,26 @@
       svg.sparkZone.setAttribute('fill', z.kind === 'support' ? 'rgb(var(--go) / 0.15)' : 'rgb(var(--stop) / 0.15)');
     } else {
       svg.sparkZone.setAttribute('height', '0');
+    }
+    // The thin scalping area, as its own band. It is NOT folded into the
+    // scale: it can sit far from the last 30 prices, and stretching the
+    // line to fit it would flatten the price. A band outside the chart
+    // clamps to its edge; one entirely outside draws nothing.
+    const scalp = state.m1 && state.m1.scalp;
+    if (scalp) {
+      const aTop = Math.min(y(scalp.areaHigh), y(scalp.areaLow));
+      const aBot = Math.max(y(scalp.areaHigh), y(scalp.areaLow));
+      const cTop = Math.max(2, Math.min(H - 2, aTop));
+      const cBot = Math.max(2, Math.min(H - 2, aBot));
+      if (cBot - cTop >= 1) {
+        svg.sparkArea.setAttribute('y', cTop.toFixed(1));
+        svg.sparkArea.setAttribute('height', (cBot - cTop).toFixed(1));
+        svg.sparkArea.setAttribute('fill', scalp.dir === 'Buy' ? 'rgb(var(--go) / 0.15)' : 'rgb(var(--stop) / 0.15)');
+      } else {
+        svg.sparkArea.setAttribute('height', '0');
+      }
+    } else {
+      svg.sparkArea.setAttribute('height', '0');
     }
   }
 
@@ -1038,6 +1122,7 @@
   function describeM1(a) {
     let s = a.label;
     if (a.extreme != null) s += ', entry ' + fmt(a.entry);
+    else if (a.scalp) s += ' ' + fmt(a.scalp.areaLow) + ' – ' + fmt(a.scalp.areaHigh) + ', entry ' + fmt(a.entry);
     return s;
   }
 

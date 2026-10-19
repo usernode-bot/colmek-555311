@@ -11,36 +11,43 @@
   "tests": [
     {
       "id": "dashboard.loads",
+      "name": "Dashboard loads",
       "path": "/",
       "expectSelector": "[data-consensus-light]"
     },
     {
       "id": "dashboard.agents",
+      "name": "Agent cards render",
       "path": "/",
       "expectText": "Trendline & SNR Mapper"
     },
     {
       "id": "dashboard.zones-current",
+      "name": "Agent 1 zone ranges render",
       "path": "/",
       "expectText": "4,128.00 – 4,133.00"
     },
     {
       "id": "dashboard.agent3-m5",
+      "name": "Agent 3 card renders",
       "path": "/",
       "expectText": "M5 Zero Floating Trigger"
     },
     {
       "id": "dashboard.live-chart",
+      "name": "Live chart renders",
       "path": "/",
       "expectSelector": "[data-live-chart]"
     },
     {
       "id": "dashboard.live-chart.demo",
+      "name": "Demo chart renders",
       "path": "/?demo=1",
       "expectText": "Live XAUUSD price"
     },
     {
       "id": "dashboard.demo",
+      "name": "Demo reaches a verdict",
       "path": "/?demo=1",
       "expectText": "Ready to Execute",
       "visual": true,
@@ -48,6 +55,15 @@
         "public/**",
         "styles/**",
         "tailwind.config.js"
+      ]
+    },
+    {
+      "id": "dashboard.agent3-scalp-area",
+      "name": "Agent 3 marks a thin scalping area",
+      "path": "/?demo=1",
+      "expectText": "Thin sell area",
+      "impact": [
+        "public/**"
       ]
     }
   ],
