@@ -76,10 +76,11 @@
   };
   const LOG_TONE = { go: 'text-go', wait: 'text-wait', stop: 'text-stop', muted: 'text-muted' };
   const BADGE = {
-    running: { tone: 'go', text: 'ACTIVE / SCANNING MARKET' },
-    paused: { tone: 'wait', text: 'PAUSED / SCAN ON HOLD' },
-    stopped: { tone: 'stop', text: 'STOPPED' },
-    starting: { tone: 'idle', text: 'STARTING' },
+    running: { tone: 'go', text: 'Active, scanning market' },
+    paused: { tone: 'wait', text: 'Paused, scan on hold' },
+    stopped: { tone: 'stop', text: 'Stopped' },
+    starting: { tone: 'idle', text: 'Starting' },
+    feed: { tone: 'stop', text: 'Feed error' },
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -96,9 +97,16 @@
     simError: $('[data-sim-error]'),
     errorTime: $('[data-error-time]'),
     retry: $('[data-retry]'),
+    feedRetry: $('[data-feed-retry]'),
     terminalBody: $('[data-terminal-body]'),
     lamps: {},
     verdict: $('[data-verdict]'),
+    confidence: $('[data-confidence]'),
+    levels: {
+      entry: $('[data-level-entry]'),
+      stop: $('[data-level-stop]'),
+      target: $('[data-level-target]'),
+    },
     reason: $('[data-reason]'),
     price: $('[data-price]'),
     priceNote: $('[data-price-note]'),
@@ -134,6 +142,21 @@
   el.agents.m1.sparkArea = $('[data-spark-area]');
   el.agents.m1.sparkLine = $('[data-spark-line]');
   el.agents.m1.sparkDot = $('[data-spark-dot]');
+  el.hist = {
+    tabs: document.querySelectorAll('[data-view-tab]'),
+    parts: document.querySelectorAll('[data-view-part]'),
+    switch: $('[data-view-switch]'),
+    winPair: $('[data-winrate-pair]'),
+    winTf: $('[data-winrate-tf]'),
+    list: $('[data-history-list]'),
+    loading: $('[data-history-loading]'),
+    empty: $('[data-history-empty]'),
+    error: $('[data-history-error]'),
+    retry: $('[data-history-retry]'),
+    openLive: $('[data-history-live]'),
+    demoNote: $('[data-history-demo]'),
+    saveNote: $('[data-history-save-note]'),
+  };
 
   /* ── Small helpers ─────────────────────────────────────────────────── */
   function mulberry32(seed) {
@@ -148,6 +171,10 @@
   }
   const now = () => (window.usernode && window.usernode.now ? window.usernode.now() : new Date());
   const fmtTime = (d) => d.toLocaleTimeString('en-GB', { hour12: false });
+  const DASH = '—';
+  function pct(n) {
+    return n == null ? DASH : n + '%';
+  }
 
   function edge(zone) {
     // The far edge: the side a sweep pierces through.
@@ -232,6 +259,8 @@
     el.lamps.go.className = 'lamp';
     el.verdict.textContent = 'Starting scan';
     el.verdict.className = 'text-title text-muted';
+    el.confidence.textContent = '';
+    renderLevels({ entry: null, stop: null, target: null });
     el.reason.textContent = 'Reading the market';
     el.price.textContent = '—';
     el.priceNote.textContent = '';
@@ -241,6 +270,7 @@
     });
     renderLadder();
     el.agents.m30.sentence.textContent = 'Reading the live feed for trendlines and levels.';
+    renderFacts(el.agents.h1.facts, []);
     renderFacts(el.agents.m30.facts, []);
     renderFacts(el.agents.m1.facts, []);
     drawSpark();
@@ -299,6 +329,10 @@
     state.map = mapSNR();
     state.m1 = evalM1(state.price, state.m30, state.map);
     state.verdict = evalMaster(state.h1, state.m30, state.m1);
+    // The signal record: settle the open entries against this price first,
+    // then note a verdict change as a new signal.
+    resolveSignals(state.price);
+    recordSignal();
 
     renderTerminal();
     ['h1', 'm30', 'm1'].forEach((a) => {
@@ -306,6 +340,7 @@
       renderChip(a, state[a]);
     });
     renderLadder();
+    renderH1Facts();
     renderM30();
     renderM1Facts();
     drawSpark();
@@ -580,20 +615,82 @@
     const entry = buy ? extreme + 0.2 : extreme - 0.2;
     const sinceExtreme = state.tick - state.episode.extremeTick;
     if (recovery >= 2.0 && sinceExtreme <= 6) {
-      return { tone: 'go', label: 'V-shape', zone: z, extreme, entry, recovery };
+      return { tone: 'go', label: 'V-shape', zone: z, extreme, entry, recovery, since: sinceExtreme };
     }
-    return { tone: 'wait', label: 'Watching wick', zone: z, extreme, entry, recovery };
+    return { tone: 'wait', label: 'Watching wick', zone: z, extreme, entry, recovery, since: sinceExtreme };
+  }
+
+  /* ── Confidence ──────────────────────────────────────────────────────
+   * How sure each agent is, and how sure the master is of its verdict.
+   * Agreement carries the most weight, then how cleanly the sweep pierced
+   * the zone and how quickly price recovered out of it. */
+  function clamp01(x) {
+    return Math.min(1, Math.max(0, x));
+  }
+  function depthScore(m30) {
+    // 0 at a 0.50 sweep through the zone's far edge, 1 at 3.00.
+    if (!m30.zone) return 0;
+    return clamp01((m30.beyond - 0.5) / 2.5);
+  }
+  function speedScore(m1) {
+    // Recovery per tick since the wick: slow at 0.33 a tick, clean at 3.00.
+    if (m1.since === undefined) return 0;
+    return clamp01((m1.recovery / Math.max(1, m1.since) - 0.33) / 2.67);
+  }
+  function confH1(a) {
+    if (a.tone === 'go') return 100 - Math.round(a.beyond / 3 * 40);
+    if (a.tone === 'wait') return Math.round(40 * (1 - a.near / 1.5));
+    return 0;
+  }
+  function confM30(m) {
+    if (m.tone === 'go') return 60 + Math.round(depthScore(m) * 40);
+    if (m.tone === 'wait') return Math.round(depthScore(m) * 40);
+    if (m.tone === 'stop') return 0;
+    return null;
+  }
+  function confM1(m) {
+    if (m.scalp) return 30; // a thin area rests on the trend alone
+    if (m.tone === 'go') return 60 + Math.round(speedScore(m) * 40);
+    if (m.tone === 'wait') return Math.round(Math.min(Math.max(0, m.recovery), 2) / 2 * 40);
+    return null;
+  }
+  function masterConfidence(h1, m30, m1) {
+    const goCount = [h1, m30, m1].filter((a) => a.tone === 'go').length;
+    return Math.min(
+      95,
+      20 * goCount +
+        Math.round(depthScore(m30) * 15) +
+        (m1.tone === 'go' ? Math.round(speedScore(m1) * 20) : 0)
+    );
   }
 
   /* ── Master decision ───────────────────────────────────────────────── */
   function evalMaster(h1, m30, m1) {
     if (h1.tone === 'go' && m30.tone === 'go' && m1.tone === 'go') {
       const z = h1.zone;
-      const dir = z.kind === 'support' ? 'Buy' : 'Sell';
+      const buy = z.kind === 'support';
+      const dir = buy ? 'Buy' : 'Sell';
+      const entry = m1.entry;
+      // Past the far edge of the tested zone, and past the sweep's wick
+      // when that went further, so the stop never sits on a price that traded.
+      const stop = buy ? Math.min(z.low, m1.extreme) - SCALP_BUF : Math.max(z.high, m1.extreme) + SCALP_BUF;
+      // The next zone of the opposite kind on Agent 1's ladder, else the
+      // scalp target distance.
+      let target = null;
+      state.pair.zones.forEach((oz) => {
+        if (buy && oz.kind === 'resistance' && oz.low > entry && (target === null || oz.low < target)) target = oz.low;
+        if (!buy && oz.kind === 'support' && oz.high < entry && (target === null || oz.high > target)) target = oz.high;
+      });
+      if (target === null) {
+        const dist = scalpSize(Math.abs(entry - stop), SCALP_TARGET);
+        target = buy ? entry + dist : entry - dist;
+      }
       return {
         tone: 'go',
         word: 'Ready to Execute',
         reason: dir + ' setup at ' + z.name + ' ' + fmt(z.low) + ' – ' + fmt(z.high),
+        confidence: masterConfidence(h1, m30, m1),
+        entry, stop, target,
       };
     }
     if (h1.tone === 'stop' || m30.tone === 'stop') {
@@ -601,13 +698,411 @@
       if (m30.tone === 'stop') reason = 'Level broken, ' + fmt(m30.beyond) + ' beyond ' + m30.zone.name;
       else if (h1.label === 'Zone broken') reason = 'H1 zone broken, no valid setup';
       else reason = 'Price mid-range, no valid zone';
-      return { tone: 'stop', word: 'Invalid Zone', reason };
+      return { tone: 'stop', word: 'Invalid Zone', reason, confidence: 0, entry: null, stop: null, target: null };
     }
     let reason;
     if (h1.tone !== 'go') reason = 'Near ' + h1.zone.name + ', no setup yet';
     else if (m30.tone === 'wait') reason = 'At ' + h1.zone.name + ', watching the level test';
     else reason = 'Level held, waiting for the M5 V-shape';
-    return { tone: 'wait', word: 'Standby', reason };
+    return {
+      tone: 'wait',
+      word: 'Standby',
+      reason,
+      confidence: masterConfidence(h1, m30, m1),
+      entry: null, stop: null, target: null,
+    };
+  }
+
+  /* ── Signal history ──────────────────────────────────────────────────
+   * Every time the Master Decision Terminal turns to Ready to Execute or
+   * Standby, one entry is recorded: the direction, the price at the signal,
+   * the H1 level used, and where the setup would go (the near edge of the
+   * next zone of the other kind) and stop (3.00 beyond the level used, the
+   * same distance at which a zone counts as broken). Open entries settle as
+   * the price moves while the scan runs. The list lives in this browser
+   * only (localStorage), newest first, latest 300.
+   *
+   * Every class name below is a whole literal: the Tailwind build scans
+   * this file with a regex (see the note at the top). */
+  const HISTORY_KEY = 'colmek.signals.v1';
+  const HISTORY_CAP = 300;
+  const STOP_BEYOND = 3.0; // evalH1's Zone broken threshold, not a refactor of it
+
+  const OUTCOME = {
+    target: { text: 'Hit target', chip: CHIP.go },
+    stop: { text: 'Hit stop', chip: CHIP.stop },
+    open: { text: 'Open', chip: CHIP.idle },
+    none: { text: 'Not scored', chip: '' },
+  };
+  const KIND_TEXT = { Buy: 'text-go', Sell: 'text-stop', Standby: 'text-wait' };
+  const TF_ROWS = ['H1', 'H4'];
+
+  const signals = {
+    demo: false,
+    loaded: false,   // loadSignals() has settled: the loading state is over
+    readError: false, // this browser would not give the saved history back
+    saveError: false, // the last write failed (quota, blocked, ...)
+    lastWord: null,  // the verdict word the previous tick saw
+    entries: [],     // newest first
+  };
+  let view = 'live';
+
+  function fmtFor(pairKey, p) {
+    const digits = PAIRS[pairKey] ? PAIRS[pairKey].digits : 2;
+    return Number(p).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  }
+
+  function copyZone(z) {
+    // A copy, not a reference: it has to survive JSON and later ticks.
+    return { name: z.name, tf: z.tf, kind: z.kind, low: z.low, high: z.high };
+  }
+
+  function targetFor(pairKey, zone) {
+    // Buy at a support targets the lowest resistance above it; Sell at a
+    // resistance targets the highest support below it. The stop sits 3.00
+    // beyond the level used, on its far side.
+    const zones = PAIRS[pairKey] ? PAIRS[pairKey].zones : [];
+    if (zone.kind === 'support') {
+      let level = null;
+      zones.forEach((z) => {
+        if (z.kind === 'resistance' && z.low > zone.high && (level === null || z.low < level)) level = z.low;
+      });
+      return { target: level, stop: zone.low - STOP_BEYOND };
+    }
+    let level = null;
+    zones.forEach((z) => {
+      if (z.kind === 'support' && z.high < zone.low && (level === null || z.high > level)) level = z.high;
+    });
+    return { target: level, stop: zone.high + STOP_BEYOND };
+  }
+
+  function newId(at) {
+    return String(at) + '-' + Math.random().toString(36).slice(2, 8);
+  }
+
+  function recordSignal() {
+    if (!state.verdict || state.price == null) return;
+    const word = state.verdict.word;
+    const prev = signals.lastWord;
+    signals.lastWord = word;
+    // Only a change TO Ready to Execute or Standby is a signal; Invalid
+    // Zone only moves the marker on.
+    if (word === prev) return;
+    if (word !== 'Ready to Execute' && word !== 'Standby') return;
+    const z = state.h1.zone;
+    if (!z) return;
+    const pair = state.pairKey;
+    const kind = word === 'Standby' ? 'Standby' : (z.kind === 'support' ? 'Buy' : 'Sell');
+
+    if (kind === 'Standby') {
+      // A repeated Standby at the same level is not listed twice in a row.
+      const newest = signals.entries.find((e) => e.pair === pair);
+      if (newest && newest.kind === 'Standby' && newest.zone.name === z.name) return;
+    } else if (signals.entries.some((e) => e.pair === pair && e.kind === kind && e.zone.name === z.name && e.outcome === 'open')) {
+      // Reopening mid-signal, or reloading while it is still open, must not
+      // add a second copy of it.
+      return;
+    }
+
+    const at = now().getTime();
+    const entry = {
+      id: newId(at),
+      at: at,
+      pair: pair,
+      kind: kind,
+      price: state.price,
+      zone: copyZone(z),
+      target: null,
+      stop: null,
+      outcome: kind === 'Standby' ? 'none' : 'open',
+      resolvedAt: null,
+      resolvedPrice: null,
+    };
+    if (kind !== 'Standby') {
+      const t = targetFor(pair, entry.zone);
+      entry.target = t.target;
+      entry.stop = t.stop;
+      if (entry.target == null) entry.outcome = 'none'; // no zone on the other side
+    }
+    signals.entries.unshift(entry);
+    saveSignals();
+    if (view === 'history') renderHistory();
+  }
+
+  function resolveSignals(price) {
+    if (price == null) return;
+    let changed = false;
+    signals.entries.forEach((e) => {
+      if (e.outcome !== 'open' || e.pair !== state.pairKey) return;
+      // Buy: target above, stop below. Sell: mirrored.
+      const hitStop = e.kind === 'Buy' ? price <= e.stop : price >= e.stop;
+      const hitTarget = e.kind === 'Buy' ? price >= e.target : price <= e.target;
+      if (!hitStop && !hitTarget) return;
+      // Both reached since the last tick: the stop is the safe reading.
+      e.outcome = hitStop ? 'stop' : 'target';
+      e.resolvedAt = now().getTime();
+      e.resolvedPrice = price;
+      changed = true;
+    });
+    if (!changed) return;
+    saveSignals();
+    if (view === 'history') renderHistory();
+  }
+
+  // Two tabs can hold the same list: merge by id, a resolved outcome wins
+  // over an open one, newest first, latest HISTORY_CAP.
+  function mergeEntries(saved, mine) {
+    const byId = new Map();
+    saved.forEach((e) => byId.set(e.id, e));
+    mine.forEach((e) => {
+      const prev = byId.get(e.id);
+      if (!prev || (prev.outcome === 'open' && e.outcome !== 'open')) byId.set(e.id, e);
+    });
+    return Array.from(byId.values())
+      .sort((a, b) => b.at - a.at)
+      .slice(0, HISTORY_CAP);
+  }
+
+  function readSaved() {
+    if (signals.demo) return { ok: true, entries: [] };
+    try {
+      const raw = window.localStorage.getItem(HISTORY_KEY);
+      if (!raw) return { ok: true, entries: [] };
+      const data = JSON.parse(raw);
+      if (!data || !Array.isArray(data.entries)) throw new Error('Unexpected history format');
+      return { ok: true, entries: data.entries };
+    } catch (_err) {
+      return { ok: false, entries: [] };
+    }
+  }
+
+  function saveSignals() {
+    // With the saved history unreadable nothing is written, so a corrupt
+    // value is never overwritten by a partial list.
+    if (signals.demo || signals.readError) return;
+    const saved = readSaved();
+    signals.entries = mergeEntries(saved.ok ? saved.entries : [], signals.entries);
+    try {
+      window.localStorage.setItem(HISTORY_KEY, JSON.stringify({ v: 1, entries: signals.entries }));
+      setSaveError(false);
+    } catch (_err) {
+      setSaveError(true);
+    }
+  }
+
+  function setSaveError(failed) {
+    if (signals.saveError === failed) return;
+    signals.saveError = failed;
+    if (el.hist.saveNote) {
+      el.hist.saveNote.hidden = !failed;
+      el.hist.saveNote.textContent = 'This browser did not save the latest signal. It stays listed until you close the page.';
+    }
+  }
+
+  function loadSignals() {
+    if (signals.demo) {
+      // The staged demo fills the list from memory and never reads or
+      // writes this browser's saved signals.
+      seedDemoSignals();
+      signals.readError = false;
+      signals.loaded = true;
+      setSaveError(false);
+      if (view === 'history') renderHistory();
+      return;
+    }
+    const saved = readSaved();
+    signals.readError = !saved.ok;
+    signals.entries = mergeEntries(saved.entries, signals.entries);
+    signals.loaded = true;
+    setSaveError(false);
+    if (view === 'history') renderHistory();
+  }
+
+  function seedDemoSignals() {
+    // Obviously fake sample signals at fixed offsets before now, so the
+    // filled screen can be checked. The staged demo never saves them.
+    const zones = PAIRS.XAUUSD.zones;
+    const sup = zones.find((z) => z.name === 'H1 support');
+    const res = zones.find((z) => z.name === 'H1 resistance');
+    const base = now().getTime();
+    const mk = (agoMin, kind, zone, price, outcome) => {
+      const t = targetFor('XAUUSD', zone);
+      const at = base - agoMin * 60 * 1000;
+      return {
+        id: newId(at) + '-' + outcome,
+        at: at,
+        pair: 'XAUUSD',
+        kind: kind,
+        price: price,
+        zone: copyZone(zone),
+        target: t.target,
+        stop: t.stop,
+        outcome: outcome,
+        resolvedAt: outcome === 'none' ? null : at + 20 * 60 * 1000,
+        resolvedPrice: outcome === 'target' ? t.target : outcome === 'stop' ? t.stop : null,
+      };
+    };
+    signals.entries = mergeEntries([
+      mk(180, 'Sell', res, 4176.1, 'target'),  // 3 h ago
+      mk(300, 'Buy', sup, 4130.6, 'stop'),     // 5 h ago
+      mk(26 * 60, 'Buy', sup, 4129.9, 'target'),
+      mk(30 * 60, 'Sell', res, 4178.4, 'target'),
+    ], []);
+  }
+
+  function signalTime(ms) {
+    const d = new Date(ms);
+    const n = now();
+    const dayStart = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const day = dayStart(d);
+    const today = dayStart(n);
+    if (day === today) return 'Today ' + hhmm(d);
+    if (today - day === 86400000) return 'Yesterday ' + hhmm(d);
+    return d.getDate() + ' ' + d.toLocaleDateString('en-GB', { month: 'short' }) + ' ' + hhmm(d);
+  }
+
+  function groupCounts(entries) {
+    const out = { target: 0, stop: 0, open: 0, none: 0, total: entries.length };
+    entries.forEach((e) => { if (out[e.outcome] != null) out[e.outcome] += 1; });
+    out.finished = out.target + out.stop;
+    return out;
+  }
+
+  function winRow(label, group, emptyText) {
+    const li = document.createElement('li');
+    li.className = 'list-row justify-between gap-3';
+    const left = document.createElement('div');
+    left.className = 'min-w-0';
+    const name = document.createElement('p');
+    name.className = 'font-semibold text-fg';
+    name.textContent = label;
+    const detail = document.createElement('p');
+    detail.className = 'text-small text-muted';
+    if (group.finished > 0) {
+      const parts = [];
+      if (group.target) parts.push(group.target + ' hit target');
+      if (group.stop) parts.push(group.stop + ' hit stop');
+      if (group.open) parts.push(group.open + ' open');
+      if (group.none) parts.push(group.none + ' not scored');
+      detail.textContent = parts.join(', ');
+    } else {
+      detail.textContent = emptyText;
+    }
+    left.appendChild(name);
+    left.appendChild(detail);
+    const right = document.createElement(group.finished > 0 ? 'b' : 'span');
+    right.className = group.finished > 0 ? 'flex-none text-title' : 'flex-none text-small text-muted';
+    right.textContent = group.finished > 0 ? Math.round((group.target / group.finished) * 100) + '%' : 'None yet';
+    li.appendChild(left);
+    li.appendChild(right);
+    return li;
+  }
+
+  function renderWinRate() {
+    const scored = signals.entries.filter((e) => e.kind === 'Buy' || e.kind === 'Sell');
+    const pairKeys = Object.keys(PAIRS);
+    signals.entries.forEach((e) => {
+      if (pairKeys.indexOf(e.pair) === -1) pairKeys.push(e.pair);
+    });
+    el.hist.winPair.replaceChildren();
+    pairKeys.forEach((key) => {
+      const group = groupCounts(scored.filter((e) => e.pair === key));
+      el.hist.winPair.appendChild(winRow(key, group, group.total ? 'No finished signals yet' : 'No signals yet'));
+    });
+    el.hist.winTf.replaceChildren();
+    TF_ROWS.forEach((tf) => {
+      const group = groupCounts(scored.filter((e) => e.zone.tf === tf));
+      el.hist.winTf.appendChild(winRow(tf, group, group.total ? 'No finished signals yet' : 'No signals at ' + tf + ' levels yet'));
+    });
+  }
+
+  function signalRow(e) {
+    const li = document.createElement('li');
+    li.className = 'list-row items-start justify-between gap-3';
+    li.dataset.outcome = e.outcome;
+    const left = document.createElement('div');
+    left.className = 'min-w-0 flex-1';
+    const head = document.createElement('p');
+    const kind = document.createElement('b');
+    kind.className = KIND_TEXT[e.kind] || 'text-muted';
+    kind.textContent = e.kind;
+    const at = document.createElement('span');
+    at.className = 'text-muted';
+    at.textContent = e.pair + ' at';
+    const price = document.createElement('b');
+    price.className = 'text-fg';
+    price.textContent = fmtFor(e.pair, e.price);
+    head.appendChild(kind);
+    head.appendChild(document.createTextNode(' '));
+    head.appendChild(at);
+    head.appendChild(document.createTextNode(' '));
+    head.appendChild(price);
+    left.appendChild(head);
+
+    const level = document.createElement('p');
+    level.className = 'text-small text-muted';
+    level.textContent = e.zone.name + ' ' + fmtFor(e.pair, e.zone.low) + ' – ' + fmtFor(e.pair, e.zone.high);
+    left.appendChild(level);
+
+    if (e.target != null) {
+      const plan = document.createElement('p');
+      plan.className = 'text-small text-muted';
+      plan.textContent = 'Target ' + fmtFor(e.pair, e.target) + ', stop ' + fmtFor(e.pair, e.stop);
+      left.appendChild(plan);
+    }
+
+    const right = document.createElement('div');
+    right.className = 'flex flex-none flex-col items-end gap-1';
+    const outcome = OUTCOME[e.outcome] || OUTCOME.open;
+    if (outcome.chip) {
+      const chip = document.createElement('span');
+      chip.className = outcome.chip;
+      chip.textContent = outcome.text;
+      right.appendChild(chip);
+    } else {
+      const plain = document.createElement('span');
+      plain.className = 'text-small text-muted';
+      plain.textContent = outcome.text;
+      right.appendChild(plain);
+    }
+    const when = document.createElement('span');
+    when.className = 'text-small text-muted';
+    when.textContent = signalTime(e.at);
+    right.appendChild(when);
+
+    li.appendChild(left);
+    li.appendChild(right);
+    return li;
+  }
+
+  function renderHistory() {
+    renderWinRate();
+    const any = signals.entries.length > 0;
+    el.hist.loading.hidden = signals.loaded;
+    el.hist.error.hidden = !(signals.loaded && signals.readError);
+    el.hist.empty.hidden = !(signals.loaded && !signals.readError && !any);
+    el.hist.list.hidden = !(signals.loaded && any);
+    el.hist.demoNote.hidden = !signals.demo;
+    if (el.hist.list.hidden) {
+      el.hist.list.replaceChildren();
+      return;
+    }
+    el.hist.list.replaceChildren();
+    signals.entries.forEach((e) => el.hist.list.appendChild(signalRow(e)));
+  }
+
+  /* ── The Live / History switch ─────────────────────────────────────────
+   * The scan, the feed and the timers keep running whichever view is
+   * open, so History stays current while it is read. */
+  function setView(next) {
+    view = next;
+    el.hist.parts.forEach((n) => { n.hidden = n.dataset.viewPart !== next; });
+    el.hist.tabs.forEach((b) => {
+      const on = b.dataset.viewTab === next;
+      b.setAttribute('aria-selected', String(on));
+      b.tabIndex = on ? 0 : -1;
+    });
+    if (next === 'history') renderHistory();
   }
 
   /* ── Rendering ─────────────────────────────────────────────────────── */
@@ -650,6 +1145,9 @@
     });
     el.verdict.textContent = state.verdict.word;
     el.verdict.className = 'text-title ' + TONE_TEXT[state.verdict.tone];
+    el.confidence.textContent = state.verdict.confidence + '% confidence';
+    el.confidence.className = 'text-small font-semibold ' + TONE_TEXT[state.verdict.tone];
+    renderLevels(state.verdict);
     el.reason.textContent = state.verdict.reason;
     el.price.textContent = fmt(state.price);
     const z = state.h1.zone;
@@ -660,6 +1158,14 @@
       else note = fmt(state.h1.near) + ' from ' + z.name;
     }
     el.priceNote.textContent = note;
+  }
+  function renderLevels(lv) {
+    el.levels.entry.textContent = lv.entry == null ? DASH : fmt(lv.entry);
+    el.levels.stop.textContent = lv.stop == null ? DASH : fmt(lv.stop);
+    el.levels.target.textContent = lv.target == null ? DASH : fmt(lv.target);
+  }
+  function renderH1Facts() {
+    renderFacts(el.agents.h1.facts, [['Confidence', pct(confH1(state.h1))]]);
   }
   function renderLadder() {
     const rows = [];
@@ -745,6 +1251,7 @@
     rows.push(['Trend', map.trend]);
     rows.push(['Nearest support', map.support ? fmt(map.support.level) + ' · ' + fmt(map.support.dist) + ' away' : '—']);
     rows.push(['Nearest resistance', map.resistance ? fmt(map.resistance.level) + ' · ' + fmt(map.resistance.dist) + ' away' : '—']);
+    rows.push(['Confidence', pct(confM30(m))]);
     el.agents.m30.sentence.textContent = sentence;
     renderFacts(el.agents.m30.facts, rows);
   }
@@ -768,6 +1275,7 @@
       rows.push(['Entry', fmt(m.entry)]);
       rows.push(['Recovery', fmt(m.recovery)]);
     }
+    rows.push(['Confidence', pct(confM1(m))]);
     renderFacts(el.agents.m1.facts, rows);
   }
   function drawSpark() {
@@ -856,6 +1364,31 @@
       t: new Date(base - (pts.length - 1 - i) * TICK_MS).toISOString(),
       p,
     }));
+  }
+
+  // No quote ever arrived: the terminal says so instead of sitting on
+  // "Starting scan" for ever, and the badge stops claiming the scan is
+  // reading a market it cannot read.
+  let feedDown = false;
+  function setFeedDown(down) {
+    if (feedDown === down) return;
+    feedDown = down;
+    el.feedRetry.hidden = !down;
+    if (down) {
+      setBadge('feed');
+      el.verdict.textContent = 'Price feed unavailable';
+      el.verdict.className = 'text-title text-stop';
+      el.reason.textContent = 'Signals pause until the price feed returns.';
+      return;
+    }
+    // Back: the next tick renders the terminal off the new price. Until
+    // then show the scan starting, not the error it just left.
+    setBadge(state.paused ? 'paused' : 'running');
+    if (state.price == null) {
+      el.verdict.textContent = 'Starting scan';
+      el.verdict.className = 'text-title text-muted';
+      el.reason.textContent = 'Reading the market';
+    }
   }
 
   function renderLive(points, opts) {
@@ -992,6 +1525,7 @@
       return;
     }
     if (data && data.ok && Array.isArray(data.points) && data.points.length > 0) {
+      setFeedDown(false);
       if (live.failing) {
         live.failing = false;
         console.warn('Live XAUUSD feed recovered.');
@@ -1020,12 +1554,21 @@
       // skeletons say the card is still working on it.
       scheduleLiveTick(LIVE_RETRY_DELAYS[liveRetryIdx]);
       liveRetryIdx += 1;
-      if (!live.hadData) renderLiveChecking();
+      if (!live.hadData) {
+        // Nothing was ever on screen, so there is no last price to fall
+        // back on: say the feed failed now, on the first failed attempt,
+        // instead of leaving "Starting scan" up while the short backoff
+        // runs. The retries still run and clear this the moment data
+        // arrives.
+        setFeedDown(true);
+        renderLiveChecking();
+      }
     } else if (!live.hadData) {
       if (!live.failing) {
         live.failing = true;
         console.warn('Live XAUUSD feed unavailable.');
       }
+      setFeedDown(true);
       renderLive(null, {
         reason: data && !data.ok && data.reason ? data.reason : 'the price feed is unreachable',
       });
@@ -1092,6 +1635,10 @@
     if (state.verdictPrev && (state.verdictPrev.tone !== state.verdict.tone || state.verdictPrev.word !== state.verdict.word)) {
       addLog('MASTER', state.verdict.tone, state.verdict.word + ' — ' + state.verdict.reason);
     }
+    // The light changed colour: alert, if this pair is a favourite.
+    if (state.verdictPrev && state.verdictPrev.tone !== state.verdict.tone) {
+      raiseAlert(state.verdictPrev.word);
+    }
     state.h1Prev = snapshot(state.h1);
     state.m30Prev = snapshot(state.m30);
     state.m1Prev = snapshot(state.m1);
@@ -1126,6 +1673,350 @@
     return s;
   }
 
+  /* ── Signal alerts ─────────────────────────────────────────────────
+   * When the consensus light changes colour on a favourite pair, the page
+   * writes an alert with its reason: the level being tested, the agents
+   * that confirmed it and the risk area. Inside the active hours and with
+   * silent mode off it also pops up; otherwise it is listed quietly. The
+   * settings and the alert history are the signed-in person's own, kept on
+   * the server. Alerts from the staged demo stay in the page. */
+  const ALERT_DEFAULTS = { favouritePairs: ['XAUUSD'], activeHours: false, activeStart: '08:00', activeEnd: '22:00', silent: false };
+  const ALERT_TOAST_MS = 8000;
+  // A price hovering on a zone's edge can flip the light back and forth
+  // every few ticks. The same change on the same pair alerts at most once
+  // in this window, so the flicker does not turn into a stream of alerts.
+  const ALERT_REPEAT_MS = 120000;
+  const AGENT_NAMES = { h1: 'Agent 1 (H1 zone)', m30: 'Agent 2 (SNR)', m1: 'Agent 3 (M5)' };
+  const TOAST_TONE = { go: 'alert-toast alert-toast-go', wait: 'alert-toast alert-toast-wait', stop: 'alert-toast alert-toast-stop' };
+  const alerts = {
+    settings: Object.assign({}, ALERT_DEFAULTS),
+    pairs: Object.keys(PAIRS),
+    signedIn: false,
+    loaded: false,
+    failed: false,
+    list: [],
+    toastTimer: null,
+    quietStart: false, // true while the demo fast-forwards: list, never pop up
+    lastSent: {}, // "pair|from|to" -> when that change last alerted
+  };
+  const ael = {
+    summary: $('[data-alerts-summary]'),
+    open: $('[data-alerts-open]'),
+    form: $('[data-alerts-form]'),
+    cancel: $('[data-alerts-cancel]'),
+    save: $('[data-alerts-save]'),
+    pairs: $('[data-alerts-pairs]'),
+    hours: $('[data-alerts-hours]'),
+    start: $('[data-alerts-start]'),
+    end: $('[data-alerts-end]'),
+    silent: $('[data-alerts-silent]'),
+    formError: $('[data-alerts-form-error]'),
+    loading: $('[data-alerts-loading]'),
+    error: $('[data-alerts-error]'),
+    retry: $('[data-alerts-retry]'),
+    empty: $('[data-alerts-empty]'),
+    list: $('[data-alerts-list]'),
+    toast: $('[data-alert-toast]'),
+    toastTitle: $('[data-alert-toast-title]'),
+    toastBody: $('[data-alert-toast-body]'),
+    toastClose: $('[data-alert-toast-close]'),
+  };
+
+  function apiHeaders(extra) {
+    const h = Object.assign({}, extra || {});
+    if (liveToken) h['x-usernode-token'] = liveToken;
+    if (window.usernode && window.usernode.previewNow) h['x-usernode-now'] = now().toISOString();
+    return h;
+  }
+
+  function toMinutes(hhmm) {
+    const m = /^(\d{2}):(\d{2})$/.exec(hhmm || '');
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  }
+  // Inside the active hours, on the device's clock. A window whose end is
+  // before its start runs overnight (22:00 until 06:00).
+  function inActiveHours(settings, d) {
+    if (!settings.activeHours) return true;
+    const a = toMinutes(settings.activeStart);
+    const b = toMinutes(settings.activeEnd);
+    if (a == null || b == null || a === b) return true;
+    const t = d.getHours() * 60 + d.getMinutes();
+    return a < b ? t >= a && t < b : t >= a || t < b;
+  }
+
+  function alertWord(verdict, zone) {
+    if (verdict.tone === 'go' && zone) return verdict.word + ' (' + (zone.kind === 'support' ? 'Buy' : 'Sell') + ')';
+    return verdict.word;
+  }
+
+  // The reason for the alert, from the same readings the terminal shows.
+  function buildAlert(fromWord) {
+    const v = state.verdict;
+    const h1 = state.h1;
+    const m30 = state.m30;
+    const m1 = state.m1;
+    const zone = h1.zone || m30.zone;
+    let level;
+    if (zone) level = zone.name + ' ' + fmt(zone.low) + ' – ' + fmt(zone.high);
+    else if (m1.scalp) level = 'No H1 zone in reach. ' + m1.label + ' ' + fmt(m1.scalp.areaLow) + ' – ' + fmt(m1.scalp.areaHigh);
+    else level = 'No zone in reach, price ' + fmt(state.price) + ' is mid-range';
+
+    const yes = ['h1', 'm30', 'm1'].filter((a) => state[a].tone === 'go').map((a) => AGENT_NAMES[a]);
+    const notYet = ['h1', 'm30', 'm1'].filter((a) => state[a].tone !== 'go').map((a) => AGENT_NAMES[a]);
+    let agents = yes.length ? yes.join(', ') : 'No agent yet';
+    if (yes.length && notYet.length) agents += '. Still waiting: ' + notYet.join(', ');
+
+    let risk;
+    if (v.tone === 'go') {
+      const buy = zone.kind === 'support';
+      const voidAt = buy ? edge(zone) - 3.0 : edge(zone) + 3.0;
+      risk = 'Entry ' + fmt(m1.entry) + ', stop ' + (buy ? 'below' : 'above') + ' the wick at ' + fmt(m30.extreme) +
+        '. The setup is void past ' + fmt(voidAt) + '.';
+    } else if (v.tone === 'wait' && zone) {
+      const voidAt = zone.kind === 'support' ? edge(zone) - 3.0 : edge(zone) + 3.0;
+      risk = 'No entry yet. The level fails if price breaks past ' + fmt(voidAt) + '.';
+    } else if (v.tone === 'stop' && zone) {
+      risk = 'Level broken, price is ' + fmt(h1.beyond || m30.beyond) + ' beyond ' + zone.name + '. Stay out until it is back inside.';
+    } else {
+      risk = 'No defined risk away from a zone. Stay flat.';
+    }
+    return {
+      id: 'local-' + Date.now() + '-' + state.tick,
+      pair: state.pairKey,
+      from: fromWord,
+      to: alertWord(v, zone),
+      tone: v.tone,
+      level: level,
+      agents: agents,
+      risk: risk,
+      quiet: false,
+      at: now().toISOString(),
+    };
+  }
+
+  function raiseAlert(fromWord) {
+    const s = alerts.settings;
+    if (s.favouritePairs.indexOf(state.pairKey) === -1) return; // not a favourite: no alert
+    const alert = buildAlert(fromWord);
+    const key = alert.pair + '|' + alert.from + '|' + alert.to;
+    const at = now().getTime();
+    if (alerts.lastSent[key] != null && at - alerts.lastSent[key] < ALERT_REPEAT_MS) return;
+    alerts.lastSent[key] = at;
+    alert.quiet = s.silent || !inActiveHours(s, now());
+    alerts.list.unshift(alert);
+    if (alerts.list.length > 50) alerts.list.length = 50;
+    renderAlerts();
+    if (!alert.quiet && !alerts.quietStart) showToast(alert);
+    // Keep it for the signed-in person. The staged demo's alerts are
+    // simulated, so they stay in the page.
+    if (!state.demo && alerts.signedIn && alerts.loaded) saveAlert(alert);
+  }
+
+  async function saveAlert(alert) {
+    try {
+      const res = await fetch('/api/alerts', {
+        method: 'POST',
+        headers: apiHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify(alert),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      alert.id = data.alert.id;
+    } catch (err) {
+      // The alert is still on screen; it just will not be there next visit.
+      console.warn('Could not save the alert:', err && err.message);
+    }
+  }
+
+  function showToast(alert) {
+    ael.toastTitle.textContent = alert.pair + ': ' + alert.from + ' → ' + alert.to;
+    ael.toastBody.textContent = alert.level + '. ' + alert.risk;
+    ael.toast.className = TOAST_TONE[alert.tone];
+    ael.toast.hidden = false;
+    clearTimeout(alerts.toastTimer);
+    alerts.toastTimer = setTimeout(hideToast, ALERT_TOAST_MS);
+  }
+  function hideToast() {
+    clearTimeout(alerts.toastTimer);
+    ael.toast.hidden = true;
+  }
+
+  function summaryText() {
+    const s = alerts.settings;
+    if (!s.favouritePairs.length) return 'No favourite pairs, so no alerts. Choose one in Settings.';
+    let t = 'Alerts for ' + s.favouritePairs.join(', ');
+    if (s.silent) t += '. Silent mode is on: listed here, no pop-ups.';
+    else if (s.activeHours) t += '. Pop-ups from ' + s.activeStart + ' until ' + s.activeEnd + '.';
+    else t += '. Pop-ups at any time.';
+    return t;
+  }
+
+  function alertRow(a) {
+    const li = document.createElement('li');
+    li.className = 'flex flex-col gap-1 px-4 py-3';
+    li.dataset.alert = '';
+    const head = document.createElement('div');
+    head.className = 'flex items-baseline justify-between gap-2';
+    const title = document.createElement('p');
+    title.className = 'min-w-0 text-small font-semibold';
+    title.append(a.pair + ': ' + a.from + ' → ');
+    const to = document.createElement('span');
+    to.className = TONE_TEXT[a.tone] || 'text-muted';
+    to.textContent = a.to;
+    title.appendChild(to);
+    const time = document.createElement('span');
+    time.className = 'flex-none text-small text-muted';
+    const d = new Date(a.at);
+    time.textContent = isNaN(d) ? '' : hhmm(d) + (a.quiet ? ', quiet' : '');
+    head.appendChild(title);
+    head.appendChild(time);
+    li.appendChild(head);
+    const dl = document.createElement('dl');
+    dl.className = 'flex flex-col gap-0.5 text-small';
+    [['Level', a.level], ['Confirmed', a.agents], ['Risk', a.risk]].forEach(([k, v]) => {
+      const row = document.createElement('div');
+      row.className = 'flex gap-2';
+      const dt = document.createElement('dt');
+      dt.className = 'w-20 flex-none text-muted';
+      dt.textContent = k;
+      const dd = document.createElement('dd');
+      dd.className = 'min-w-0 flex-1';
+      dd.textContent = v;
+      row.appendChild(dt);
+      row.appendChild(dd);
+      dl.appendChild(row);
+    });
+    li.appendChild(dl);
+    return li;
+  }
+
+  function renderAlerts() {
+    ael.summary.textContent = summaryText();
+    const loading = !alerts.loaded && !alerts.failed;
+    ael.loading.hidden = !loading || alerts.list.length > 0;
+    ael.error.hidden = !alerts.failed;
+    ael.empty.hidden = !alerts.loaded || alerts.list.length > 0;
+    ael.list.hidden = alerts.list.length === 0;
+    ael.list.replaceChildren.apply(ael.list, alerts.list.map(alertRow));
+  }
+
+  async function loadAlerts() {
+    alerts.failed = false;
+    alerts.loaded = false;
+    renderAlerts();
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 5000);
+    try {
+      const opts = { headers: apiHeaders(), signal: ctl.signal };
+      const [sRes, lRes] = await Promise.all([
+        fetch('/api/alerts/settings', opts),
+        state.demo ? null : fetch('/api/alerts', opts),
+      ]);
+      if (!sRes.ok || (lRes && !lRes.ok)) throw new Error('HTTP ' + (sRes.ok ? lRes.status : sRes.status));
+      const sData = await sRes.json();
+      alerts.settings = Object.assign({}, ALERT_DEFAULTS, sData.settings);
+      if (Array.isArray(sData.pairs)) alerts.pairs = sData.pairs.filter((p) => PAIRS[p]);
+      alerts.signedIn = !!sData.signedIn;
+      if (lRes) {
+        const lData = await lRes.json();
+        // Alerts raised while the history loaded stay on top.
+        alerts.list = alerts.list.concat(lData.alerts || []).slice(0, 50);
+      }
+      alerts.loaded = true;
+    } catch (err) {
+      alerts.failed = true;
+      console.warn('Alerts could not be loaded:', err && err.message);
+    }
+    clearTimeout(timer);
+    renderAlerts();
+  }
+
+  function fillForm() {
+    const s = alerts.settings;
+    ael.pairs.replaceChildren();
+    alerts.pairs.forEach((key) => {
+      const label = document.createElement('label');
+      label.className = 'flex min-h-11 items-center gap-3 text-body';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.className = 'h-5 w-5 flex-none accent-accent';
+      box.value = key;
+      box.checked = s.favouritePairs.indexOf(key) !== -1;
+      box.dataset.alertsPair = '';
+      label.appendChild(box);
+      label.append(PAIRS[key].label);
+      ael.pairs.appendChild(label);
+    });
+    ael.hours.checked = s.activeHours;
+    ael.start.value = s.activeStart;
+    ael.end.value = s.activeEnd;
+    ael.silent.checked = s.silent;
+    syncHours();
+    ael.formError.hidden = true;
+  }
+  function syncHours() {
+    ael.start.disabled = !ael.hours.checked;
+    ael.end.disabled = !ael.hours.checked;
+  }
+  function openForm() {
+    fillForm();
+    ael.form.hidden = false;
+    ael.open.hidden = true;
+    ael.open.setAttribute('aria-expanded', 'true');
+  }
+  function closeForm() {
+    ael.form.hidden = true;
+    ael.open.hidden = false;
+    ael.open.setAttribute('aria-expanded', 'false');
+    ael.open.focus({ preventScroll: true });
+  }
+  function formError(text) {
+    ael.formError.textContent = text;
+    ael.formError.hidden = false;
+  }
+
+  async function saveSettings(ev) {
+    ev.preventDefault();
+    const next = {
+      favouritePairs: Array.from(ael.pairs.querySelectorAll('[data-alerts-pair]')).filter((b) => b.checked).map((b) => b.value),
+      activeHours: ael.hours.checked,
+      activeStart: ael.start.value,
+      activeEnd: ael.end.value,
+      silent: ael.silent.checked,
+    };
+    if (!/^\d{2}:\d{2}$/.test(next.activeStart) || !/^\d{2}:\d{2}$/.test(next.activeEnd)) {
+      return formError('Enter both active hours as times, for example 08:00.');
+    }
+    ael.save.disabled = true;
+    ael.save.textContent = 'Saving…';
+    try {
+      const res = await fetch('/api/alerts/settings', {
+        method: 'PUT',
+        headers: apiHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify(next),
+      });
+      if (res.status === 401) throw new Error('account');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      alerts.settings = Object.assign({}, ALERT_DEFAULTS, data.settings);
+      renderAlerts();
+      closeForm();
+    } catch (err) {
+      formError(err.message === 'account'
+        ? 'Make an account to save alert settings.'
+        : 'Your settings could not be saved. Your earlier settings still apply. Try again.');
+    }
+    ael.save.disabled = false;
+    ael.save.textContent = 'Save';
+  }
+
+  ael.open.addEventListener('click', openForm);
+  ael.cancel.addEventListener('click', closeForm);
+  ael.form.addEventListener('submit', saveSettings);
+  ael.hours.addEventListener('change', syncHours);
+  ael.retry.addEventListener('click', () => loadAlerts());
+  ael.toastClose.addEventListener('click', hideToast);
+
   /* ── Timer, pause, error ───────────────────────────────────────────── */
   function stopTimer() {
     if (state.timer) {
@@ -1155,7 +2046,8 @@
     }, TICK_MS);
     state.running = true;
     state.paused = false;
-    setBadge('running');
+    // With the feed still down the green reading would be a lie.
+    setBadge(feedDown ? 'feed' : 'running');
     setPauseButton(false);
     el.terminalMeta.textContent = '';
   }
@@ -1197,10 +2089,14 @@
 
   function rebuild(seed) {
     resetEngine(seed);
+    alerts.lastSent = {};
     state.h1Prev = snapshot(state.h1);
     state.m30Prev = snapshot(state.m30);
     state.m1Prev = snapshot(state.m1);
     state.verdictPrev = null;
+    // A restarted scan records its first verdict as a fresh signal change;
+    // the dedupe in recordSignal keeps a still-open setup from doubling up.
+    signals.lastWord = null;
   }
 
   async function boot() {
@@ -1233,6 +2129,17 @@
       if (foot) foot.textContent = 'Agents run on simulated prices. Analysis only, nothing is traded.';
     }
 
+    // The alert settings decide which light changes alert, so read them
+    // before the first tick (loadAlerts gives up after 5 s and keeps the
+    // defaults).
+    await loadAlerts();
+
+    signals.demo = demo;
+    // The view was already set before boot(): re-setting it here, after the
+    // session fetch, would throw away a History the person tapped while
+    // that fetch was in flight.
+    loadSignals();
+
     buildPairOptions();
     rebuild(demo ? DEMO_SEED : Date.now());
 
@@ -1240,11 +2147,13 @@
       // Fast-forward synchronously to the first tick after the first green
       // verdict, so the staged screen opens populated and ready.
       let greenAt = null;
+      alerts.quietStart = true; // listed, never popped up, while fast-forwarding
       for (let i = 0; i < 200; i++) {
         tickOnce();
         if (greenAt === null && state.verdict.tone === 'go') greenAt = state.tick;
         if (greenAt !== null && state.tick > greenAt) break;
       }
+      alerts.quietStart = false;
       backdateLog();
     } else {
       addLog('SYSTEM', 'muted', 'Scan started on ' + state.pairKey + '.');
@@ -1278,6 +2187,24 @@
     if (!state.stopped) startTimer();
   });
   el.live.retry.addEventListener('click', () => retryLive());
+  el.feedRetry.addEventListener('click', () => retryLive());
+
+  el.hist.tabs.forEach((b) => b.addEventListener('click', () => setView(b.dataset.viewTab)));
+  el.hist.switch.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+    ev.preventDefault();
+    const tabs = Array.from(el.hist.tabs);
+    const i = tabs.findIndex((b) => b.dataset.viewTab === view);
+    const next = tabs[(i + (ev.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+    setView(next.dataset.viewTab);
+    next.focus();
+  });
+  el.hist.retry.addEventListener('click', () => loadSignals());
+  el.hist.openLive.addEventListener('click', () => setView('live'));
+  // Live on every load, except a ?view=history deep link (the staging
+  // screens and the checks use it); the choice is never remembered. Set
+  // before boot() so no late async step can undo a tap on History.
+  setView(new URLSearchParams(location.search).get('view') === 'history' ? 'history' : 'live');
 
   boot();
 })();

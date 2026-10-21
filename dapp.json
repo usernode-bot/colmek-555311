@@ -72,6 +72,31 @@
       "expectText": "Agents run on simulated prices. Analysis only, nothing is traded."
     },
     {
+      "id": "dashboard.confidence-levels",
+      "name": "Confidence and entry, stop, target show with a verdict",
+      "path": "/?demo=1",
+      "expectSelector": "[data-confidence]",
+      "expectText": "% confidence",
+      "impact": [
+        "public/**"
+      ]
+    },
+    {
+      "id": "history.tab",
+      "name": "History tab renders",
+      "path": "/",
+      "expectSelector": "[data-view-tab=\"history\"]"
+    },
+    {
+      "id": "history.demo",
+      "name": "Demo history lists signals",
+      "path": "/?demo=1&view=history",
+      "expectSelector": "[data-history-list] [data-outcome=\"target\"]",
+      "impact": [
+        "public/**"
+      ]
+    },
+    {
       "id": "dashboard.agent3-scalp-area",
       "name": "Agent 3 marks a thin scalping area",
       "path": "/?demo=1",
@@ -79,6 +104,24 @@
       "impact": [
         "public/**"
       ]
+    },
+    {
+      "id": "alerts.card",
+      "name": "Signal alerts card renders",
+      "path": "/",
+      "expectSelector": "[data-alerts-open]"
+    },
+    {
+      "id": "alerts.demo",
+      "name": "Demo light change raises an alert with its reason",
+      "path": "/?demo=1",
+      "expectText": "Standby → Ready to Execute (Buy)"
+    },
+    {
+      "id": "alerts.demo-reason",
+      "name": "Alert names the confirming agents",
+      "path": "/?demo=1",
+      "expectText": "Agent 1 (H1 zone), Agent 2 (SNR), Agent 3 (M5)"
     }
   ],
   "visibility": {

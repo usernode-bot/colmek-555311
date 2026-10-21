@@ -96,6 +96,55 @@ function requestNow(req) {
   return typeof raw === 'string' && PREVIEW_NOW.test(raw) ? new Date(raw) : new Date();
 }
 
+// ── Account deletion and export ──────────────────────────────────────────
+// When a person deletes their Homeroom account (or asks for a copy of their
+// data) the platform calls these two routes with a platform token in
+// `x-usernode-platform-token`. Mounted before the sign-in check: the request
+// carries no person's sign-in token. Rows are found by the token's `id`.
+const USER_TABLES = ['alert_settings', 'signal_alerts'];
+function platformClaims(req, purpose) {
+  const token = req.headers['x-usernode-platform-token'];
+  if (!token || !JWT_PUBLIC_KEY || !APP_AUDIENCE) return null;
+  try {
+    const claims = jwt.verify(token, JWT_PUBLIC_KEY, {
+      algorithms: ['RS256'],
+      issuer: 'usernode',
+      audience: APP_AUDIENCE,
+    });
+    return claims && claims.pur === purpose && claims.id != null ? claims : null;
+  } catch {
+    return null;
+  }
+}
+app.post('/usernode/user-deletion', async (req, res) => {
+  const claims = platformClaims(req, 'user-deletion');
+  if (!claims) return res.status(403).json({ error: 'forbidden' });
+  try {
+    for (const t of USER_TABLES) {
+      await pool.query(`DELETE FROM ${t} WHERE user_id = $1`, [String(claims.id)]);
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.warn('user deletion failed: ' + err.message);
+    return res.status(500).json({ error: 'deletion_failed' });
+  }
+});
+app.get('/usernode/user-export', async (req, res) => {
+  const claims = platformClaims(req, 'user-export');
+  if (!claims) return res.status(403).json({ error: 'forbidden' });
+  try {
+    const tables = {};
+    for (const t of USER_TABLES) {
+      const { rows } = await pool.query(`SELECT * FROM ${t} WHERE user_id = $1`, [String(claims.id)]);
+      tables[t] = rows;
+    }
+    return res.json({ userId: claims.id, tables });
+  } catch (err) {
+    console.warn('user export failed: ' + err.message);
+    return res.status(500).json({ error: 'export_failed' });
+  }
+});
+
 // Verify platform-issued JWT if one was passed, then enforce auth on
 // anything not explicitly marked public. The iframe adds `?token=…`
 // on load; the frontend script forwards the token via `x-usernode-token`
@@ -254,6 +303,173 @@ app.get('/api/xau', (_req, res) => {
   });
 });
 
+// ── Signal alerts ────────────────────────────────────────────────────────
+// The scan runs in the browser; when a favourite pair's light changes, the
+// page records the alert here with its reason. Each person keeps their own
+// settings (favourite pairs, active hours, silent mode) and their latest
+// alerts. Both tables are private: settings and alert history are one
+// person's own, so staging gets the schema without the rows.
+const ALERT_PAIRS = ['XAUUSD']; // the pairs the dashboard can scan
+const ALERT_KEEP = 50; // alerts kept per person, newest first
+const DEFAULT_ALERT_SETTINGS = {
+  favouritePairs: ['XAUUSD'],
+  activeHours: false,
+  activeStart: '08:00',
+  activeEnd: '22:00',
+  silent: false,
+};
+let alertsReady = false; // false until the boot migration has run
+
+async function migrate() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS alert_settings (
+      user_id TEXT PRIMARY KEY,
+      favourite_pairs TEXT[] NOT NULL DEFAULT ARRAY['XAUUSD'],
+      active_hours BOOLEAN NOT NULL DEFAULT FALSE,
+      active_start TEXT NOT NULL DEFAULT '08:00',
+      active_end TEXT NOT NULL DEFAULT '22:00',
+      silent BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+  await pool.query(`COMMENT ON TABLE alert_settings IS 'staging:private'`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS signal_alerts (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      pair TEXT NOT NULL,
+      from_word TEXT NOT NULL,
+      to_word TEXT NOT NULL,
+      tone TEXT NOT NULL,
+      level TEXT NOT NULL,
+      agents TEXT NOT NULL,
+      risk TEXT NOT NULL,
+      quiet BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+  await pool.query(`COMMENT ON TABLE signal_alerts IS 'staging:private'`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS signal_alerts_user_idx ON signal_alerts (user_id, id DESC)`);
+}
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+function settingsFromRow(row) {
+  if (!row) return { ...DEFAULT_ALERT_SETTINGS };
+  return {
+    favouritePairs: row.favourite_pairs.filter((p) => ALERT_PAIRS.includes(p)),
+    activeHours: row.active_hours,
+    activeStart: row.active_start,
+    activeEnd: row.active_end,
+    silent: row.silent,
+  };
+}
+function alertFromRow(row) {
+  return {
+    id: Number(row.id),
+    pair: row.pair,
+    from: row.from_word,
+    to: row.to_word,
+    tone: row.tone,
+    level: row.level,
+    agents: row.agents,
+    risk: row.risk,
+    quiet: row.quiet,
+    at: row.created_at,
+  };
+}
+function cleanText(v, max) {
+  return typeof v === 'string' ? v.trim().slice(0, max) : '';
+}
+
+// Settings: a guest (or a person who never saved any) gets the defaults.
+app.get('/api/alerts/settings', async (req, res) => {
+  if (!alertsReady) return res.status(503).json({ error: 'alerts_unavailable' });
+  if (!req.user) return res.json({ settings: { ...DEFAULT_ALERT_SETTINGS }, pairs: ALERT_PAIRS, signedIn: false });
+  try {
+    const { rows } = await pool.query('SELECT * FROM alert_settings WHERE user_id = $1', [String(req.user.id)]);
+    return res.json({ settings: settingsFromRow(rows[0]), pairs: ALERT_PAIRS, signedIn: true });
+  } catch (err) {
+    console.warn('alert settings read failed: ' + err.message);
+    return res.status(500).json({ error: 'settings_read_failed' });
+  }
+});
+
+app.put('/api/alerts/settings', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'account_required', action: 'save alert settings' });
+  if (!alertsReady) return res.status(503).json({ error: 'alerts_unavailable' });
+  const b = req.body || {};
+  const favs = Array.isArray(b.favouritePairs) ? [...new Set(b.favouritePairs.filter((p) => ALERT_PAIRS.includes(p)))] : null;
+  if (!favs || typeof b.activeHours !== 'boolean' || typeof b.silent !== 'boolean'
+    || !HHMM.test(b.activeStart || '') || !HHMM.test(b.activeEnd || '')) {
+    return res.status(400).json({ error: 'invalid_settings' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO alert_settings (user_id, favourite_pairs, active_hours, active_start, active_end, silent, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET favourite_pairs = EXCLUDED.favourite_pairs,
+         active_hours = EXCLUDED.active_hours, active_start = EXCLUDED.active_start,
+         active_end = EXCLUDED.active_end, silent = EXCLUDED.silent, updated_at = NOW()
+       RETURNING *`,
+      [String(req.user.id), favs, b.activeHours, b.activeStart, b.activeEnd, b.silent],
+    );
+    return res.json({ settings: settingsFromRow(rows[0]) });
+  } catch (err) {
+    console.warn('alert settings write failed: ' + err.message);
+    return res.status(500).json({ error: 'settings_write_failed' });
+  }
+});
+
+app.get('/api/alerts', async (req, res) => {
+  if (!alertsReady) return res.status(503).json({ error: 'alerts_unavailable' });
+  if (!req.user) return res.json({ alerts: [] });
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM signal_alerts WHERE user_id = $1 ORDER BY id DESC LIMIT $2',
+      [String(req.user.id), ALERT_KEEP],
+    );
+    return res.json({ alerts: rows.map(alertFromRow) });
+  } catch (err) {
+    console.warn('alerts read failed: ' + err.message);
+    return res.status(500).json({ error: 'alerts_read_failed' });
+  }
+});
+
+app.post('/api/alerts', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'account_required' });
+  if (!alertsReady) return res.status(503).json({ error: 'alerts_unavailable' });
+  const b = req.body || {};
+  const alert = {
+    pair: cleanText(b.pair, 16),
+    from: cleanText(b.from, 40),
+    to: cleanText(b.to, 40),
+    tone: cleanText(b.tone, 8),
+    level: cleanText(b.level, 200),
+    agents: cleanText(b.agents, 200),
+    risk: cleanText(b.risk, 200),
+  };
+  if (!ALERT_PAIRS.includes(alert.pair) || !['go', 'wait', 'stop'].includes(alert.tone)
+    || !alert.from || !alert.to || !alert.level || !alert.agents || !alert.risk) {
+    return res.status(400).json({ error: 'invalid_alert' });
+  }
+  const userId = String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO signal_alerts (user_id, pair, from_word, to_word, tone, level, agents, risk, quiet)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [userId, alert.pair, alert.from, alert.to, alert.tone, alert.level, alert.agents, alert.risk, b.quiet === true],
+    );
+    // Keep only the newest ALERT_KEEP per person.
+    await pool.query(
+      `DELETE FROM signal_alerts WHERE user_id = $1 AND id NOT IN (
+         SELECT id FROM signal_alerts WHERE user_id = $1 ORDER BY id DESC LIMIT $2)`,
+      [userId, ALERT_KEEP],
+    );
+    return res.status(201).json({ alert: alertFromRow(rows[0]) });
+  } catch (err) {
+    console.warn('alert write failed: ' + err.message);
+    return res.status(500).json({ error: 'alert_write_failed' });
+  }
+});
+
 // What the page needs to know before it boots: whether this visit should run
 // the staged demo (staging only, asked for with ?demo=1) and whether the
 // viewer is signed in. GET, so guests may read it.
@@ -309,6 +525,16 @@ app.get('*', (req, res) => {
 });
 
 async function start() {
+  // Schema for the signal alerts. A database problem must not take the
+  // dashboard down with it: the scan needs no database, so the alerts API
+  // answers 503 until a later boot migrates successfully.
+  try {
+    await migrate();
+    alertsReady = true;
+  } catch (err) {
+    console.warn('alerts migration failed, alerts disabled: ' + err.message);
+  }
+
   const server = app.listen(port, () => console.log(`Listening on :${port}`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
