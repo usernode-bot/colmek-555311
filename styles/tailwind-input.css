@@ -173,6 +173,16 @@
   .status-pill-stop { @apply bg-stop/10 text-stop; }
   .status-pill-idle { @apply bg-raised text-muted; }
 
+  /* While running, the badge's dot pulses: a ring of the same green grows out
+     and fades, about once every 2 s. Only the run class carries it, so
+     paused, stopped and starting stay still. Kept inside the reduced-motion
+     guard so those viewers see the plain dot. */
+  @media (prefers-reduced-motion: no-preference) {
+    .status-pill-go::before {
+      animation: status-pulse 2s ease-out infinite;
+    }
+  }
+
   /* The M5 mini chart on Agent 3. */
   .spark {
     @apply block w-full rounded-lg bg-raised;
@@ -188,4 +198,14 @@
   @media (max-width: 767px) {
     .live-chart { height: 120px; }
   }
+}
+
+/* The running badge's pulse, kept outside @layer components so the compiled
+   stylesheet always carries it. The ring is the same soft halo as a lit lamp,
+   on a slow loop; the dot dims only slightly so it stays as bold as its text. */
+@keyframes status-pulse {
+  0%   { box-shadow: 0 0 0 0 rgb(var(--go) / 0.45); opacity: 1; }
+  50%  { opacity: 0.7; }
+  70%  { box-shadow: 0 0 0 6px rgb(var(--go) / 0); }
+  100% { box-shadow: 0 0 0 0 rgb(var(--go) / 0); opacity: 1; }
 }
