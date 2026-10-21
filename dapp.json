@@ -58,6 +58,20 @@
       ]
     },
     {
+      "id": "dashboard.risk-disclaimer",
+      "name": "Footer risk disclaimer opens",
+      "path": "/",
+      "expectSelector": "[data-footer-note] summary",
+      "expectText": "Risk disclaimer"
+    },
+    {
+      "id": "dashboard.risk-disclaimer.demo",
+      "name": "Demo footer keeps the disclosure",
+      "path": "/?demo=1",
+      "expectSelector": "[data-foot-lead]",
+      "expectText": "Agents run on simulated prices. Analysis only, nothing is traded."
+    },
+    {
       "id": "dashboard.confidence-levels",
       "name": "Confidence and entry, stop, target show with a verdict",
       "path": "/?demo=1",
