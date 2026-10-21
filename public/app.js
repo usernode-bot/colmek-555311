@@ -76,10 +76,11 @@
   };
   const LOG_TONE = { go: 'text-go', wait: 'text-wait', stop: 'text-stop', muted: 'text-muted' };
   const BADGE = {
-    running: { tone: 'go', text: 'ACTIVE / SCANNING MARKET' },
-    paused: { tone: 'wait', text: 'PAUSED / SCAN ON HOLD' },
-    stopped: { tone: 'stop', text: 'STOPPED' },
-    starting: { tone: 'idle', text: 'STARTING' },
+    running: { tone: 'go', text: 'Active, scanning market' },
+    paused: { tone: 'wait', text: 'Paused, scan on hold' },
+    stopped: { tone: 'stop', text: 'Stopped' },
+    starting: { tone: 'idle', text: 'Starting' },
+    feed: { tone: 'stop', text: 'Feed error' },
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -96,6 +97,7 @@
     simError: $('[data-sim-error]'),
     errorTime: $('[data-error-time]'),
     retry: $('[data-retry]'),
+    feedRetry: $('[data-feed-retry]'),
     terminalBody: $('[data-terminal-body]'),
     lamps: {},
     verdict: $('[data-verdict]'),
@@ -1269,6 +1271,31 @@
     }));
   }
 
+  // No quote ever arrived: the terminal says so instead of sitting on
+  // "Starting scan" for ever, and the badge stops claiming the scan is
+  // reading a market it cannot read.
+  let feedDown = false;
+  function setFeedDown(down) {
+    if (feedDown === down) return;
+    feedDown = down;
+    el.feedRetry.hidden = !down;
+    if (down) {
+      setBadge('feed');
+      el.verdict.textContent = 'Price feed unavailable';
+      el.verdict.className = 'text-title text-stop';
+      el.reason.textContent = 'Signals pause until the price feed returns.';
+      return;
+    }
+    // Back: the next tick renders the terminal off the new price. Until
+    // then show the scan starting, not the error it just left.
+    setBadge(state.paused ? 'paused' : 'running');
+    if (state.price == null) {
+      el.verdict.textContent = 'Starting scan';
+      el.verdict.className = 'text-title text-muted';
+      el.reason.textContent = 'Reading the market';
+    }
+  }
+
   function renderLive(points, opts) {
     opts = opts || {};
     // Whatever the outcome, the fetch is over: the Retry button reads
@@ -1403,6 +1430,7 @@
       return;
     }
     if (data && data.ok && Array.isArray(data.points) && data.points.length > 0) {
+      setFeedDown(false);
       if (live.failing) {
         live.failing = false;
         console.warn('Live XAUUSD feed recovered.');
@@ -1437,6 +1465,7 @@
         live.failing = true;
         console.warn('Live XAUUSD feed unavailable.');
       }
+      setFeedDown(true);
       renderLive(null, {
         reason: data && !data.ok && data.reason ? data.reason : 'the price feed is unreachable',
       });
@@ -1566,7 +1595,8 @@
     }, TICK_MS);
     state.running = true;
     state.paused = false;
-    setBadge('running');
+    // With the feed still down the green reading would be a lie.
+    setBadge(feedDown ? 'feed' : 'running');
     setPauseButton(false);
     el.terminalMeta.textContent = '';
   }
@@ -1648,10 +1678,10 @@
     }
 
     signals.demo = demo;
+    // The view was already set before boot(): re-setting it here, after the
+    // session fetch, would throw away a History the person tapped while
+    // that fetch was in flight.
     loadSignals();
-    // Live on every load, except a ?view=history deep link (the staging
-    // screens and the checks use it); the choice is never remembered.
-    setView(params.get('view') === 'history' ? 'history' : 'live');
 
     buildPairOptions();
     rebuild(demo ? DEMO_SEED : Date.now());
@@ -1698,6 +1728,7 @@
     if (!state.stopped) startTimer();
   });
   el.live.retry.addEventListener('click', () => retryLive());
+  el.feedRetry.addEventListener('click', () => retryLive());
 
   el.hist.tabs.forEach((b) => b.addEventListener('click', () => setView(b.dataset.viewTab)));
   el.hist.switch.addEventListener('keydown', (ev) => {
@@ -1711,7 +1742,10 @@
   });
   el.hist.retry.addEventListener('click', () => loadSignals());
   el.hist.openLive.addEventListener('click', () => setView('live'));
-  setView('live');
+  // Live on every load, except a ?view=history deep link (the staging
+  // screens and the checks use it); the choice is never remembered. Set
+  // before boot() so no late async step can undo a tap on History.
+  setView(new URLSearchParams(location.search).get('view') === 'history' ? 'history' : 'live');
 
   boot();
 })();
