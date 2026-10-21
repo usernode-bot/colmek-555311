@@ -1459,7 +1459,15 @@
       // skeletons say the card is still working on it.
       scheduleLiveTick(LIVE_RETRY_DELAYS[liveRetryIdx]);
       liveRetryIdx += 1;
-      if (!live.hadData) renderLiveChecking();
+      if (!live.hadData) {
+        // Nothing was ever on screen, so there is no last price to fall
+        // back on: say the feed failed now, on the first failed attempt,
+        // instead of leaving "Starting scan" up while the short backoff
+        // runs. The retries still run and clear this the moment data
+        // arrives.
+        setFeedDown(true);
+        renderLiveChecking();
+      }
     } else if (!live.hadData) {
       if (!live.failing) {
         live.failing = true;
