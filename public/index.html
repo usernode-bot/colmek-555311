@@ -137,18 +137,10 @@
       </div>
     </header>
 
-    <!-- Two views of one app: the live dashboard and the signal history
-         (Riwayat). Hash routes (#riwayat), so a link or a check can open
-         either one; app.js redraws on every hash change. -->
-    <nav class="order-first md:col-span-3" aria-label="Views">
-      <div role="tablist" class="inline-flex gap-1 rounded-lg border border-line bg-surface p-1">
-        <a href="#dashboard" role="tab" data-tab="dashboard" aria-selected="true" class="inline-flex min-h-11 items-center rounded-md px-4 text-body font-medium text-muted hover:bg-raised aria-selected:bg-raised aria-selected:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">Dashboard</a>
-        <a href="#riwayat" role="tab" data-tab="riwayat" aria-selected="false" class="inline-flex min-h-11 items-center rounded-md px-4 text-body font-medium text-muted hover:bg-raised aria-selected:bg-raised aria-selected:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">Riwayat</a>
-      </div>
-    </nav>
-
-    <!-- Live / History switch: Live is today's dashboard, History is the
-         signal record. The scan keeps running in both. -->
+    <!-- Live / History / Riwayat switch: Live is today's dashboard, History
+         the signal record kept in this browser, Riwayat the one kept for the
+         viewer's account on the server (#riwayat opens it). The scan keeps
+         running in all three. -->
     <div data-view-switch class="view-switch order-first md:col-span-3" role="tablist" aria-label="View">
       <button type="button" id="view-tab-live" data-view-tab="live" role="tab" aria-selected="true" aria-controls="view-live" class="view-tab">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 16 8 11 12 13 17 7 21 9"/></svg>
@@ -157,6 +149,10 @@
       <button type="button" id="view-tab-history" data-view-tab="history" role="tab" aria-selected="false" aria-controls="view-history" class="view-tab">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><line x1="9" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="9" y1="18" x2="21" y2="18"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg>
         History
+      </button>
+      <button type="button" id="view-tab-riwayat" data-view-tab="riwayat" data-tab="riwayat" role="tab" aria-selected="false" aria-controls="view-riwayat" class="view-tab">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+        Riwayat
       </button>
     </div>
 
@@ -172,7 +168,7 @@
     <!-- Master Decision Terminal: the consensus light (the signature
          element), the verdict, the price and the three agents' votes. On a
          phone it comes first so the answer is on the first screen. -->
-    <section class="card order-1 flex flex-col gap-3 md:order-3 md:col-span-1" data-terminal data-view="dashboard">
+    <section class="card order-1 flex flex-col gap-3 md:order-3 md:col-span-1" data-terminal>
       <div class="flex items-baseline justify-between gap-2">
         <h2 class="text-heading">Master Decision Terminal</h2>
         <span data-terminal-meta class="text-small text-muted"></span>
@@ -189,12 +185,29 @@
             <span data-lamp="go" class="lamp"></span>
           </div>
           <div class="min-w-0">
-            <p data-verdict aria-live="polite" class="text-title text-muted">Starting scan</p>
+            <div class="flex flex-wrap items-baseline gap-x-2">
+              <p data-verdict aria-live="polite" class="text-title text-muted">Starting scan</p>
+              <span data-confidence class="text-small font-semibold text-muted"></span>
+            </div>
             <p data-reason class="text-small text-muted">Reading the market</p>
             <div class="mt-1 flex items-baseline gap-2">
               <b data-price class="text-heading">&mdash;</b>
               <span data-price-note class="min-w-0 text-small text-muted"></span>
             </div>
+            <dl data-levels class="mt-3 grid grid-cols-3 gap-2">
+              <div>
+                <dt class="text-small text-muted">Entry</dt>
+                <dd data-level-entry class="text-small font-semibold text-fg">&mdash;</dd>
+              </div>
+              <div>
+                <dt class="text-small text-muted">Stop</dt>
+                <dd data-level-stop class="text-small font-semibold text-fg">&mdash;</dd>
+              </div>
+              <div>
+                <dt class="text-small text-muted">Target</dt>
+                <dd data-level-target class="text-small font-semibold text-fg">&mdash;</dd>
+              </div>
+            </dl>
           </div>
         </div>
         <div class="mt-4 grid grid-cols-3 gap-2 border-t border-line pt-3">
@@ -234,7 +247,7 @@
          drawn as a bigger version of Agent 3's mini chart. In the DOM right
          after the terminal, so on a phone it follows it (both order-1); on
          md the terminal is order-3, so this card leads the screen. -->
-    <section class="card order-1 flex flex-col gap-2 md:order-1 md:col-span-3" data-live-chart data-view="dashboard">
+    <section class="card order-1 flex flex-col gap-2 md:order-1 md:col-span-3" data-live-chart>
       <div class="flex items-baseline justify-between gap-2">
         <h2 class="text-heading">Live XAUUSD price</h2>
         <span data-live-updated class="text-small text-muted"></span>
@@ -270,8 +283,75 @@
       </div>
     </section>
 
+    <!-- Signal alerts: one entry each time a favourite pair's light changes,
+         with the reason (the level tested, the agents that confirmed it and
+         the risk area). Settings choose the favourite pairs, the active
+         hours and silent mode. On a phone it follows the chart; on md it
+         sits beside the activity log. -->
+    <section class="card order-1 flex flex-col gap-3 md:order-4 md:col-span-1" data-alerts>
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="text-heading">Signal alerts</h2>
+        <button type="button" data-alerts-open class="btn-secondary" aria-expanded="false" aria-controls="alert-settings">Settings</button>
+      </div>
+      <p data-alerts-summary class="text-small text-muted"></p>
+
+      <form id="alert-settings" data-alerts-form class="flex flex-col gap-4 border-t border-line pt-3" hidden novalidate>
+        <div class="flex items-center justify-between gap-2">
+          <button type="button" data-alerts-cancel class="btn-secondary">Cancel</button>
+          <h3 class="text-body font-semibold">Alert settings</h3>
+          <button type="submit" data-alerts-save class="btn-primary">Save</button>
+        </div>
+        <fieldset class="flex flex-col gap-1">
+          <legend class="mb-1 text-small font-medium text-muted">Favourite pairs</legend>
+          <div data-alerts-pairs class="flex flex-col"></div>
+          <p class="text-small text-muted">Only favourite pairs send alerts.</p>
+        </fieldset>
+        <fieldset class="flex flex-col gap-2">
+          <legend class="mb-1 text-small font-medium text-muted">Active hours</legend>
+          <label class="flex min-h-11 items-center gap-3 text-body">
+            <input type="checkbox" data-alerts-hours class="h-5 w-5 flex-none accent-accent">
+            Only pop up during active hours
+          </label>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label for="alert-start" class="mb-1 block text-small text-muted">From</label>
+              <input id="alert-start" type="time" data-alerts-start class="field disabled:opacity-50" value="08:00">
+            </div>
+            <div>
+              <label for="alert-end" class="mb-1 block text-small text-muted">Until</label>
+              <input id="alert-end" type="time" data-alerts-end class="field disabled:opacity-50" value="22:00">
+            </div>
+          </div>
+          <p class="text-small text-muted">Your device's time. Outside these hours alerts are listed here quietly.</p>
+        </fieldset>
+        <fieldset class="flex flex-col gap-1">
+          <legend class="mb-1 text-small font-medium text-muted">Silent mode</legend>
+          <label class="flex min-h-11 items-center gap-3 text-body">
+            <input type="checkbox" data-alerts-silent class="h-5 w-5 flex-none accent-accent">
+            Silent mode
+          </label>
+          <p class="text-small text-muted">No pop-ups. Alerts are still listed here.</p>
+        </fieldset>
+        <p data-alerts-form-error class="text-small text-stop" role="alert" hidden></p>
+      </form>
+
+      <div data-alerts-loading>
+        <div class="skeleton h-4 w-3/4"></div>
+        <div class="skeleton mt-3 h-16 w-full"></div>
+      </div>
+      <div data-alerts-error class="state-error" hidden>
+        <p class="text-small">Your saved alerts and settings could not be loaded. New alerts still appear here.</p>
+        <button type="button" data-alerts-retry class="btn-secondary">Retry</button>
+      </div>
+      <div data-alerts-empty class="state-empty" hidden>
+        <p class="text-body font-semibold">No alerts yet</p>
+        <p class="text-small text-muted">You get one when a favourite pair's light changes, for example from Standby to Ready to Execute.</p>
+      </div>
+      <ul data-alerts-list class="list md:max-h-96 md:overflow-y-auto" hidden></ul>
+    </section>
+
     <!-- The three parallel agents, one column each on a wide screen. -->
-    <section class="order-2 md:col-span-3" data-view="dashboard">
+    <section class="order-2 md:col-span-3">
       <p class="section-label">Agents</p>
       <div class="grid gap-3 md:grid-cols-3">
 
@@ -287,6 +367,7 @@
             <span data-chip class="chip chip-idle">Reading</span>
           </div>
           <ul data-ladder class="rounded-xl border border-line bg-surface"></ul>
+          <dl data-facts class="mt-3 space-y-1.5 text-small"></dl>
         </article>
 
         <article class="card" data-agent="m30">
@@ -331,7 +412,7 @@
     </section>
 
     <!-- Activity log: the terminal's printout, newest first, latest 60. -->
-    <section class="card order-3 flex flex-col gap-2 md:order-4 md:col-span-2" data-view="dashboard">
+    <section class="card order-3 flex flex-col gap-2 md:order-4 md:col-span-2">
       <div class="flex items-baseline justify-between gap-2">
         <h2 class="text-heading">Activity log</h2>
         <span class="text-small text-muted">Latest 60</span>
@@ -348,13 +429,13 @@
     <!-- Riwayat: every Buy, Sell and Standby the dashboard showed this
          viewer on the live price, judged later against the server's own
          price samples. Win rates first, then the signals, newest first. -->
-    <section data-view="riwayat" data-history hidden class="order-2 flex flex-col gap-4 md:col-span-3">
+    <section id="view-riwayat" data-view-part="riwayat" data-riwayat role="tabpanel" aria-labelledby="view-tab-riwayat" hidden class="order-2 flex flex-col gap-4 md:col-span-3">
       <div class="flex flex-col gap-1">
-        <h2 class="text-heading">Signal history</h2>
-        <p class="text-small text-muted">A signal wins when price reaches its target, the next SNR level in its direction, and loses when price breaks 3.00 beyond its zone. Standby counts in the direction of the zone it waits on.</p>
+        <h2 class="text-heading">Riwayat</h2>
+        <p class="text-small text-muted">Kept for your account on the server, so it follows you to any device. A signal wins when price reaches its target, the next SNR level in its direction, and loses when price breaks 3.00 beyond its zone. Standby counts in the direction of the zone it waits on.</p>
       </div>
 
-      <div data-history-loading class="flex flex-col gap-4">
+      <div data-riwayat-loading class="flex flex-col gap-4">
         <div class="grid gap-4 md:grid-cols-2">
           <div class="skeleton h-20 w-full"></div>
           <div class="skeleton h-20 w-full"></div>
@@ -362,39 +443,39 @@
         <div class="skeleton h-48 w-full"></div>
       </div>
 
-      <div data-history-error class="card state-error" hidden>
+      <div data-riwayat-error class="card state-error" hidden>
         <p class="text-body font-semibold">The signal history could not be loaded.</p>
         <p class="text-small text-muted">The dashboard still works and keeps recording signals.</p>
-        <button type="button" data-history-retry class="btn-secondary">Retry</button>
+        <button type="button" data-riwayat-retry class="btn-secondary">Retry</button>
       </div>
 
-      <div data-history-guest class="card state-empty" hidden>
+      <div data-riwayat-guest class="card state-empty" hidden>
         <p class="text-body font-semibold">Your history is kept for your account</p>
         <p class="text-small text-muted">Make an account and the dashboard records every Buy, Sell and Standby it shows you.</p>
-        <button type="button" data-history-join class="btn-primary">Make an account</button>
+        <button type="button" data-riwayat-join class="btn-primary">Make an account</button>
       </div>
 
-      <div data-history-body hidden class="flex flex-col gap-4">
-        <div data-history-stats class="grid gap-4 md:grid-cols-2">
+      <div data-riwayat-body hidden class="flex flex-col gap-4">
+        <div data-riwayat-stats class="grid gap-4 md:grid-cols-2">
           <div>
             <p class="section-label">Win rate by pair</p>
-            <ul data-stats-pair class="list"></ul>
+            <ul data-riwayat-stats-pair class="list"></ul>
           </div>
           <div>
             <p class="section-label">Win rate by timeframe</p>
-            <ul data-stats-tf class="list"></ul>
+            <ul data-riwayat-stats-tf class="list"></ul>
           </div>
         </div>
         <div>
           <div class="flex items-baseline justify-between gap-2">
             <p class="section-label">Signals</p>
-            <span data-history-count class="mb-2 px-1 text-small text-muted"></span>
+            <span data-riwayat-count class="mb-2 px-1 text-small text-muted"></span>
           </div>
-          <ul data-history-list class="list"></ul>
-          <div data-history-empty class="card state-empty" hidden>
+          <ul data-riwayat-list class="list"></ul>
+          <div data-riwayat-empty class="card state-empty" hidden>
             <p class="text-body font-semibold">No signals yet</p>
             <p class="text-small text-muted">Signals are recorded while the dashboard is open and shows a Buy, Sell or Standby on the live price.</p>
-            <a href="#dashboard" class="btn-primary">Open the dashboard</a>
+            <button type="button" data-riwayat-live class="btn-secondary">Open Live</button>
           </div>
         </div>
       </div>
@@ -439,8 +520,27 @@
       </section>
     </div>
 
-    <p data-footer-note class="order-5 pb-6 pt-2 text-center text-small text-muted md:col-span-3">Agents read the live XAUUSD price feed. Analysis only, nothing is traded. Not financial advice.</p>
+    <div data-footer-note class="order-5 pb-6 pt-2 text-center text-small text-muted md:col-span-3">
+      <p><span data-foot-lead>Agents read the live XAUUSD price feed. Analysis only, nothing is traded.</span></p>
+      <details>
+        <summary class="mx-auto w-fit cursor-pointer rounded px-2 py-3 text-small text-muted hover:text-fg focus-visible:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">Risk disclaimer</summary>
+        <p class="mx-auto max-w-prose pb-2 text-small text-muted">Signals are for information only. colmek places no trades and never touches your money. Trading forex and gold carries a real risk of loss, and past signals do not promise future results. This is not financial advice.</p>
+      </details>
+    </div>
   </main>
+  <!-- The alert pop-up: shown when a favourite pair's light changes inside
+       active hours and silent mode is off. -->
+  <div data-alert-toast class="alert-toast" role="status" aria-live="polite" hidden>
+    <div class="flex items-start gap-3">
+      <div class="min-w-0 flex-1">
+        <p data-alert-toast-title class="text-body font-semibold"></p>
+        <p data-alert-toast-body class="text-small text-muted"></p>
+      </div>
+      <button type="button" data-alert-toast-close class="btn-secondary flex-none px-3" aria-label="Close alert">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
   <script src="/app.js" defer></script>
 </body>
 </html>

@@ -101,6 +101,12 @@
     terminalBody: $('[data-terminal-body]'),
     lamps: {},
     verdict: $('[data-verdict]'),
+    confidence: $('[data-confidence]'),
+    levels: {
+      entry: $('[data-level-entry]'),
+      stop: $('[data-level-stop]'),
+      target: $('[data-level-target]'),
+    },
     reason: $('[data-reason]'),
     price: $('[data-price]'),
     priceNote: $('[data-price-note]'),
@@ -165,6 +171,10 @@
   }
   const now = () => (window.usernode && window.usernode.now ? window.usernode.now() : new Date());
   const fmtTime = (d) => d.toLocaleTimeString('en-GB', { hour12: false });
+  const DASH = '—';
+  function pct(n) {
+    return n == null ? DASH : n + '%';
+  }
 
   function edge(zone) {
     // The far edge: the side a sweep pierces through.
@@ -207,7 +217,7 @@
     lastPriceLog: null, // { at, price } for the "in Ns" of the price lines
     startedAt: null,
     signedIn: false,
-    lastSignalKey: null, // the signal last sent to the history, so a held signal records once
+    riwayatLastKey: null, // the signal last sent to Riwayat, so a held signal records once
   };
 
   function buildPairOptions() {
@@ -235,7 +245,7 @@
     state.episode = null;
     state.verdict = null;
     state.lastPriceLog = null;
-    state.lastSignalKey = null;
+    state.riwayatLastKey = null;
     state.startedAt = now().getTime();
     state.h1 = { tone: 'stop', label: 'Mid-range', zone: null, beyond: 0, near: 0 };
     state.m30 = { tone: 'idle', label: 'No level', zone: null, extreme: null, beyond: 0 };
@@ -252,6 +262,8 @@
     el.lamps.go.className = 'lamp';
     el.verdict.textContent = 'Starting scan';
     el.verdict.className = 'text-title text-muted';
+    el.confidence.textContent = '';
+    renderLevels({ entry: null, stop: null, target: null });
     el.reason.textContent = 'Reading the market';
     el.price.textContent = '—';
     el.priceNote.textContent = '';
@@ -261,6 +273,7 @@
     });
     renderLadder();
     el.agents.m30.sentence.textContent = 'Reading the live feed for trendlines and levels.';
+    renderFacts(el.agents.h1.facts, []);
     renderFacts(el.agents.m30.facts, []);
     renderFacts(el.agents.m1.facts, []);
     drawSpark();
@@ -330,13 +343,14 @@
       renderChip(a, state[a]);
     });
     renderLadder();
+    renderH1Facts();
     renderM30();
     renderM1Facts();
     drawSpark();
     writeTickLogs();
     // Only a live scan feeds the history: the staged demo's prices are
     // simulated, and its history is the server's demo set.
-    if (!state.demo) recordSignal();
+    if (!state.demo) recordRiwayat();
     // In the staged demo the live card is drawn from the simulation, on
     // every tick, so the visual test stays deterministic.
     if (state.demo) renderLive(demoPoints(), { demo: true });
@@ -607,20 +621,82 @@
     const entry = buy ? extreme + 0.2 : extreme - 0.2;
     const sinceExtreme = state.tick - state.episode.extremeTick;
     if (recovery >= 2.0 && sinceExtreme <= 6) {
-      return { tone: 'go', label: 'V-shape', zone: z, extreme, entry, recovery };
+      return { tone: 'go', label: 'V-shape', zone: z, extreme, entry, recovery, since: sinceExtreme };
     }
-    return { tone: 'wait', label: 'Watching wick', zone: z, extreme, entry, recovery };
+    return { tone: 'wait', label: 'Watching wick', zone: z, extreme, entry, recovery, since: sinceExtreme };
+  }
+
+  /* ── Confidence ──────────────────────────────────────────────────────
+   * How sure each agent is, and how sure the master is of its verdict.
+   * Agreement carries the most weight, then how cleanly the sweep pierced
+   * the zone and how quickly price recovered out of it. */
+  function clamp01(x) {
+    return Math.min(1, Math.max(0, x));
+  }
+  function depthScore(m30) {
+    // 0 at a 0.50 sweep through the zone's far edge, 1 at 3.00.
+    if (!m30.zone) return 0;
+    return clamp01((m30.beyond - 0.5) / 2.5);
+  }
+  function speedScore(m1) {
+    // Recovery per tick since the wick: slow at 0.33 a tick, clean at 3.00.
+    if (m1.since === undefined) return 0;
+    return clamp01((m1.recovery / Math.max(1, m1.since) - 0.33) / 2.67);
+  }
+  function confH1(a) {
+    if (a.tone === 'go') return 100 - Math.round(a.beyond / 3 * 40);
+    if (a.tone === 'wait') return Math.round(40 * (1 - a.near / 1.5));
+    return 0;
+  }
+  function confM30(m) {
+    if (m.tone === 'go') return 60 + Math.round(depthScore(m) * 40);
+    if (m.tone === 'wait') return Math.round(depthScore(m) * 40);
+    if (m.tone === 'stop') return 0;
+    return null;
+  }
+  function confM1(m) {
+    if (m.scalp) return 30; // a thin area rests on the trend alone
+    if (m.tone === 'go') return 60 + Math.round(speedScore(m) * 40);
+    if (m.tone === 'wait') return Math.round(Math.min(Math.max(0, m.recovery), 2) / 2 * 40);
+    return null;
+  }
+  function masterConfidence(h1, m30, m1) {
+    const goCount = [h1, m30, m1].filter((a) => a.tone === 'go').length;
+    return Math.min(
+      95,
+      20 * goCount +
+        Math.round(depthScore(m30) * 15) +
+        (m1.tone === 'go' ? Math.round(speedScore(m1) * 20) : 0)
+    );
   }
 
   /* ── Master decision ───────────────────────────────────────────────── */
   function evalMaster(h1, m30, m1) {
     if (h1.tone === 'go' && m30.tone === 'go' && m1.tone === 'go') {
       const z = h1.zone;
-      const dir = z.kind === 'support' ? 'Buy' : 'Sell';
+      const buy = z.kind === 'support';
+      const dir = buy ? 'Buy' : 'Sell';
+      const entry = m1.entry;
+      // Past the far edge of the tested zone, and past the sweep's wick
+      // when that went further, so the stop never sits on a price that traded.
+      const stop = buy ? Math.min(z.low, m1.extreme) - SCALP_BUF : Math.max(z.high, m1.extreme) + SCALP_BUF;
+      // The next zone of the opposite kind on Agent 1's ladder, else the
+      // scalp target distance.
+      let target = null;
+      state.pair.zones.forEach((oz) => {
+        if (buy && oz.kind === 'resistance' && oz.low > entry && (target === null || oz.low < target)) target = oz.low;
+        if (!buy && oz.kind === 'support' && oz.high < entry && (target === null || oz.high > target)) target = oz.high;
+      });
+      if (target === null) {
+        const dist = scalpSize(Math.abs(entry - stop), SCALP_TARGET);
+        target = buy ? entry + dist : entry - dist;
+      }
       return {
         tone: 'go',
         word: 'Ready to Execute',
         reason: dir + ' setup at ' + z.name + ' ' + fmt(z.low) + ' – ' + fmt(z.high),
+        confidence: masterConfidence(h1, m30, m1),
+        entry, stop, target,
       };
     }
     if (h1.tone === 'stop' || m30.tone === 'stop') {
@@ -628,13 +704,19 @@
       if (m30.tone === 'stop') reason = 'Level broken, ' + fmt(m30.beyond) + ' beyond ' + m30.zone.name;
       else if (h1.label === 'Zone broken') reason = 'H1 zone broken, no valid setup';
       else reason = 'Price mid-range, no valid zone';
-      return { tone: 'stop', word: 'Invalid Zone', reason };
+      return { tone: 'stop', word: 'Invalid Zone', reason, confidence: 0, entry: null, stop: null, target: null };
     }
     let reason;
     if (h1.tone !== 'go') reason = 'Near ' + h1.zone.name + ', no setup yet';
     else if (m30.tone === 'wait') reason = 'At ' + h1.zone.name + ', watching the level test';
     else reason = 'Level held, waiting for the M5 V-shape';
-    return { tone: 'wait', word: 'Standby', reason };
+    return {
+      tone: 'wait',
+      word: 'Standby',
+      reason,
+      confidence: masterConfidence(h1, m30, m1),
+      entry: null, stop: null, target: null,
+    };
   }
 
   /* ── Signal history ──────────────────────────────────────────────────
@@ -1027,6 +1109,17 @@
       b.tabIndex = on ? 0 : -1;
     });
     if (next === 'history') renderHistory();
+    // Riwayat loads from the server once boot knows demo or not, and
+    // refreshes while open; #riwayat in the address follows the switch.
+    if (next === 'riwayat') {
+      if (riwayatBooted) loadRiwayat();
+    } else {
+      clearTimeout(riwayat.timer);
+    }
+    const hash = next === 'riwayat' ? '#riwayat' : '';
+    if (location.hash !== hash && (hash || location.hash === '#riwayat')) {
+      window.history.replaceState(null, '', location.pathname + location.search + hash);
+    }
   }
 
   /* ── Rendering ─────────────────────────────────────────────────────── */
@@ -1069,6 +1162,9 @@
     });
     el.verdict.textContent = state.verdict.word;
     el.verdict.className = 'text-title ' + TONE_TEXT[state.verdict.tone];
+    el.confidence.textContent = state.verdict.confidence + '% confidence';
+    el.confidence.className = 'text-small font-semibold ' + TONE_TEXT[state.verdict.tone];
+    renderLevels(state.verdict);
     el.reason.textContent = state.verdict.reason;
     el.price.textContent = fmt(state.price);
     const z = state.h1.zone;
@@ -1079,6 +1175,14 @@
       else note = fmt(state.h1.near) + ' from ' + z.name;
     }
     el.priceNote.textContent = note;
+  }
+  function renderLevels(lv) {
+    el.levels.entry.textContent = lv.entry == null ? DASH : fmt(lv.entry);
+    el.levels.stop.textContent = lv.stop == null ? DASH : fmt(lv.stop);
+    el.levels.target.textContent = lv.target == null ? DASH : fmt(lv.target);
+  }
+  function renderH1Facts() {
+    renderFacts(el.agents.h1.facts, [['Confidence', pct(confH1(state.h1))]]);
   }
   function renderLadder() {
     const rows = [];
@@ -1164,6 +1268,7 @@
     rows.push(['Trend', map.trend]);
     rows.push(['Nearest support', map.support ? fmt(map.support.level) + ' · ' + fmt(map.support.dist) + ' away' : '—']);
     rows.push(['Nearest resistance', map.resistance ? fmt(map.resistance.level) + ' · ' + fmt(map.resistance.dist) + ' away' : '—']);
+    rows.push(['Confidence', pct(confM30(m))]);
     el.agents.m30.sentence.textContent = sentence;
     renderFacts(el.agents.m30.facts, rows);
   }
@@ -1187,6 +1292,7 @@
       rows.push(['Entry', fmt(m.entry)]);
       rows.push(['Recovery', fmt(m.recovery)]);
     }
+    rows.push(['Confidence', pct(confM1(m))]);
     renderFacts(el.agents.m1.facts, rows);
   }
   function drawSpark() {
@@ -1546,6 +1652,10 @@
     if (state.verdictPrev && (state.verdictPrev.tone !== state.verdict.tone || state.verdictPrev.word !== state.verdict.word)) {
       addLog('MASTER', state.verdict.tone, state.verdict.word + ' — ' + state.verdict.reason);
     }
+    // The light changed colour: alert, if this pair is a favourite.
+    if (state.verdictPrev && state.verdictPrev.tone !== state.verdict.tone) {
+      raiseAlert(state.verdictPrev.word);
+    }
     state.h1Prev = snapshot(state.h1);
     state.m30Prev = snapshot(state.m30);
     state.m1Prev = snapshot(state.m1);
@@ -1579,6 +1689,350 @@
     else if (a.scalp) s += ' ' + fmt(a.scalp.areaLow) + ' – ' + fmt(a.scalp.areaHigh) + ', entry ' + fmt(a.entry);
     return s;
   }
+
+  /* ── Signal alerts ─────────────────────────────────────────────────
+   * When the consensus light changes colour on a favourite pair, the page
+   * writes an alert with its reason: the level being tested, the agents
+   * that confirmed it and the risk area. Inside the active hours and with
+   * silent mode off it also pops up; otherwise it is listed quietly. The
+   * settings and the alert history are the signed-in person's own, kept on
+   * the server. Alerts from the staged demo stay in the page. */
+  const ALERT_DEFAULTS = { favouritePairs: ['XAUUSD'], activeHours: false, activeStart: '08:00', activeEnd: '22:00', silent: false };
+  const ALERT_TOAST_MS = 8000;
+  // A price hovering on a zone's edge can flip the light back and forth
+  // every few ticks. The same change on the same pair alerts at most once
+  // in this window, so the flicker does not turn into a stream of alerts.
+  const ALERT_REPEAT_MS = 120000;
+  const AGENT_NAMES = { h1: 'Agent 1 (H1 zone)', m30: 'Agent 2 (SNR)', m1: 'Agent 3 (M5)' };
+  const TOAST_TONE = { go: 'alert-toast alert-toast-go', wait: 'alert-toast alert-toast-wait', stop: 'alert-toast alert-toast-stop' };
+  const alerts = {
+    settings: Object.assign({}, ALERT_DEFAULTS),
+    pairs: Object.keys(PAIRS),
+    signedIn: false,
+    loaded: false,
+    failed: false,
+    list: [],
+    toastTimer: null,
+    quietStart: false, // true while the demo fast-forwards: list, never pop up
+    lastSent: {}, // "pair|from|to" -> when that change last alerted
+  };
+  const ael = {
+    summary: $('[data-alerts-summary]'),
+    open: $('[data-alerts-open]'),
+    form: $('[data-alerts-form]'),
+    cancel: $('[data-alerts-cancel]'),
+    save: $('[data-alerts-save]'),
+    pairs: $('[data-alerts-pairs]'),
+    hours: $('[data-alerts-hours]'),
+    start: $('[data-alerts-start]'),
+    end: $('[data-alerts-end]'),
+    silent: $('[data-alerts-silent]'),
+    formError: $('[data-alerts-form-error]'),
+    loading: $('[data-alerts-loading]'),
+    error: $('[data-alerts-error]'),
+    retry: $('[data-alerts-retry]'),
+    empty: $('[data-alerts-empty]'),
+    list: $('[data-alerts-list]'),
+    toast: $('[data-alert-toast]'),
+    toastTitle: $('[data-alert-toast-title]'),
+    toastBody: $('[data-alert-toast-body]'),
+    toastClose: $('[data-alert-toast-close]'),
+  };
+
+  function apiHeaders(extra) {
+    const h = Object.assign({}, extra || {});
+    if (liveToken) h['x-usernode-token'] = liveToken;
+    if (window.usernode && window.usernode.previewNow) h['x-usernode-now'] = now().toISOString();
+    return h;
+  }
+
+  function toMinutes(hhmm) {
+    const m = /^(\d{2}):(\d{2})$/.exec(hhmm || '');
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  }
+  // Inside the active hours, on the device's clock. A window whose end is
+  // before its start runs overnight (22:00 until 06:00).
+  function inActiveHours(settings, d) {
+    if (!settings.activeHours) return true;
+    const a = toMinutes(settings.activeStart);
+    const b = toMinutes(settings.activeEnd);
+    if (a == null || b == null || a === b) return true;
+    const t = d.getHours() * 60 + d.getMinutes();
+    return a < b ? t >= a && t < b : t >= a || t < b;
+  }
+
+  function alertWord(verdict, zone) {
+    if (verdict.tone === 'go' && zone) return verdict.word + ' (' + (zone.kind === 'support' ? 'Buy' : 'Sell') + ')';
+    return verdict.word;
+  }
+
+  // The reason for the alert, from the same readings the terminal shows.
+  function buildAlert(fromWord) {
+    const v = state.verdict;
+    const h1 = state.h1;
+    const m30 = state.m30;
+    const m1 = state.m1;
+    const zone = h1.zone || m30.zone;
+    let level;
+    if (zone) level = zone.name + ' ' + fmt(zone.low) + ' – ' + fmt(zone.high);
+    else if (m1.scalp) level = 'No H1 zone in reach. ' + m1.label + ' ' + fmt(m1.scalp.areaLow) + ' – ' + fmt(m1.scalp.areaHigh);
+    else level = 'No zone in reach, price ' + fmt(state.price) + ' is mid-range';
+
+    const yes = ['h1', 'm30', 'm1'].filter((a) => state[a].tone === 'go').map((a) => AGENT_NAMES[a]);
+    const notYet = ['h1', 'm30', 'm1'].filter((a) => state[a].tone !== 'go').map((a) => AGENT_NAMES[a]);
+    let agents = yes.length ? yes.join(', ') : 'No agent yet';
+    if (yes.length && notYet.length) agents += '. Still waiting: ' + notYet.join(', ');
+
+    let risk;
+    if (v.tone === 'go') {
+      const buy = zone.kind === 'support';
+      const voidAt = buy ? edge(zone) - 3.0 : edge(zone) + 3.0;
+      risk = 'Entry ' + fmt(m1.entry) + ', stop ' + (buy ? 'below' : 'above') + ' the wick at ' + fmt(m30.extreme) +
+        '. The setup is void past ' + fmt(voidAt) + '.';
+    } else if (v.tone === 'wait' && zone) {
+      const voidAt = zone.kind === 'support' ? edge(zone) - 3.0 : edge(zone) + 3.0;
+      risk = 'No entry yet. The level fails if price breaks past ' + fmt(voidAt) + '.';
+    } else if (v.tone === 'stop' && zone) {
+      risk = 'Level broken, price is ' + fmt(h1.beyond || m30.beyond) + ' beyond ' + zone.name + '. Stay out until it is back inside.';
+    } else {
+      risk = 'No defined risk away from a zone. Stay flat.';
+    }
+    return {
+      id: 'local-' + Date.now() + '-' + state.tick,
+      pair: state.pairKey,
+      from: fromWord,
+      to: alertWord(v, zone),
+      tone: v.tone,
+      level: level,
+      agents: agents,
+      risk: risk,
+      quiet: false,
+      at: now().toISOString(),
+    };
+  }
+
+  function raiseAlert(fromWord) {
+    const s = alerts.settings;
+    if (s.favouritePairs.indexOf(state.pairKey) === -1) return; // not a favourite: no alert
+    const alert = buildAlert(fromWord);
+    const key = alert.pair + '|' + alert.from + '|' + alert.to;
+    const at = now().getTime();
+    if (alerts.lastSent[key] != null && at - alerts.lastSent[key] < ALERT_REPEAT_MS) return;
+    alerts.lastSent[key] = at;
+    alert.quiet = s.silent || !inActiveHours(s, now());
+    alerts.list.unshift(alert);
+    if (alerts.list.length > 50) alerts.list.length = 50;
+    renderAlerts();
+    if (!alert.quiet && !alerts.quietStart) showToast(alert);
+    // Keep it for the signed-in person. The staged demo's alerts are
+    // simulated, so they stay in the page.
+    if (!state.demo && alerts.signedIn && alerts.loaded) saveAlert(alert);
+  }
+
+  async function saveAlert(alert) {
+    try {
+      const res = await fetch('/api/alerts', {
+        method: 'POST',
+        headers: apiHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify(alert),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      alert.id = data.alert.id;
+    } catch (err) {
+      // The alert is still on screen; it just will not be there next visit.
+      console.warn('Could not save the alert:', err && err.message);
+    }
+  }
+
+  function showToast(alert) {
+    ael.toastTitle.textContent = alert.pair + ': ' + alert.from + ' → ' + alert.to;
+    ael.toastBody.textContent = alert.level + '. ' + alert.risk;
+    ael.toast.className = TOAST_TONE[alert.tone];
+    ael.toast.hidden = false;
+    clearTimeout(alerts.toastTimer);
+    alerts.toastTimer = setTimeout(hideToast, ALERT_TOAST_MS);
+  }
+  function hideToast() {
+    clearTimeout(alerts.toastTimer);
+    ael.toast.hidden = true;
+  }
+
+  function summaryText() {
+    const s = alerts.settings;
+    if (!s.favouritePairs.length) return 'No favourite pairs, so no alerts. Choose one in Settings.';
+    let t = 'Alerts for ' + s.favouritePairs.join(', ');
+    if (s.silent) t += '. Silent mode is on: listed here, no pop-ups.';
+    else if (s.activeHours) t += '. Pop-ups from ' + s.activeStart + ' until ' + s.activeEnd + '.';
+    else t += '. Pop-ups at any time.';
+    return t;
+  }
+
+  function alertRow(a) {
+    const li = document.createElement('li');
+    li.className = 'flex flex-col gap-1 px-4 py-3';
+    li.dataset.alert = '';
+    const head = document.createElement('div');
+    head.className = 'flex items-baseline justify-between gap-2';
+    const title = document.createElement('p');
+    title.className = 'min-w-0 text-small font-semibold';
+    title.append(a.pair + ': ' + a.from + ' → ');
+    const to = document.createElement('span');
+    to.className = TONE_TEXT[a.tone] || 'text-muted';
+    to.textContent = a.to;
+    title.appendChild(to);
+    const time = document.createElement('span');
+    time.className = 'flex-none text-small text-muted';
+    const d = new Date(a.at);
+    time.textContent = isNaN(d) ? '' : hhmm(d) + (a.quiet ? ', quiet' : '');
+    head.appendChild(title);
+    head.appendChild(time);
+    li.appendChild(head);
+    const dl = document.createElement('dl');
+    dl.className = 'flex flex-col gap-0.5 text-small';
+    [['Level', a.level], ['Confirmed', a.agents], ['Risk', a.risk]].forEach(([k, v]) => {
+      const row = document.createElement('div');
+      row.className = 'flex gap-2';
+      const dt = document.createElement('dt');
+      dt.className = 'w-20 flex-none text-muted';
+      dt.textContent = k;
+      const dd = document.createElement('dd');
+      dd.className = 'min-w-0 flex-1';
+      dd.textContent = v;
+      row.appendChild(dt);
+      row.appendChild(dd);
+      dl.appendChild(row);
+    });
+    li.appendChild(dl);
+    return li;
+  }
+
+  function renderAlerts() {
+    ael.summary.textContent = summaryText();
+    const loading = !alerts.loaded && !alerts.failed;
+    ael.loading.hidden = !loading || alerts.list.length > 0;
+    ael.error.hidden = !alerts.failed;
+    ael.empty.hidden = !alerts.loaded || alerts.list.length > 0;
+    ael.list.hidden = alerts.list.length === 0;
+    ael.list.replaceChildren.apply(ael.list, alerts.list.map(alertRow));
+  }
+
+  async function loadAlerts() {
+    alerts.failed = false;
+    alerts.loaded = false;
+    renderAlerts();
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 5000);
+    try {
+      const opts = { headers: apiHeaders(), signal: ctl.signal };
+      const [sRes, lRes] = await Promise.all([
+        fetch('/api/alerts/settings', opts),
+        state.demo ? null : fetch('/api/alerts', opts),
+      ]);
+      if (!sRes.ok || (lRes && !lRes.ok)) throw new Error('HTTP ' + (sRes.ok ? lRes.status : sRes.status));
+      const sData = await sRes.json();
+      alerts.settings = Object.assign({}, ALERT_DEFAULTS, sData.settings);
+      if (Array.isArray(sData.pairs)) alerts.pairs = sData.pairs.filter((p) => PAIRS[p]);
+      alerts.signedIn = !!sData.signedIn;
+      if (lRes) {
+        const lData = await lRes.json();
+        // Alerts raised while the history loaded stay on top.
+        alerts.list = alerts.list.concat(lData.alerts || []).slice(0, 50);
+      }
+      alerts.loaded = true;
+    } catch (err) {
+      alerts.failed = true;
+      console.warn('Alerts could not be loaded:', err && err.message);
+    }
+    clearTimeout(timer);
+    renderAlerts();
+  }
+
+  function fillForm() {
+    const s = alerts.settings;
+    ael.pairs.replaceChildren();
+    alerts.pairs.forEach((key) => {
+      const label = document.createElement('label');
+      label.className = 'flex min-h-11 items-center gap-3 text-body';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.className = 'h-5 w-5 flex-none accent-accent';
+      box.value = key;
+      box.checked = s.favouritePairs.indexOf(key) !== -1;
+      box.dataset.alertsPair = '';
+      label.appendChild(box);
+      label.append(PAIRS[key].label);
+      ael.pairs.appendChild(label);
+    });
+    ael.hours.checked = s.activeHours;
+    ael.start.value = s.activeStart;
+    ael.end.value = s.activeEnd;
+    ael.silent.checked = s.silent;
+    syncHours();
+    ael.formError.hidden = true;
+  }
+  function syncHours() {
+    ael.start.disabled = !ael.hours.checked;
+    ael.end.disabled = !ael.hours.checked;
+  }
+  function openForm() {
+    fillForm();
+    ael.form.hidden = false;
+    ael.open.hidden = true;
+    ael.open.setAttribute('aria-expanded', 'true');
+  }
+  function closeForm() {
+    ael.form.hidden = true;
+    ael.open.hidden = false;
+    ael.open.setAttribute('aria-expanded', 'false');
+    ael.open.focus({ preventScroll: true });
+  }
+  function formError(text) {
+    ael.formError.textContent = text;
+    ael.formError.hidden = false;
+  }
+
+  async function saveSettings(ev) {
+    ev.preventDefault();
+    const next = {
+      favouritePairs: Array.from(ael.pairs.querySelectorAll('[data-alerts-pair]')).filter((b) => b.checked).map((b) => b.value),
+      activeHours: ael.hours.checked,
+      activeStart: ael.start.value,
+      activeEnd: ael.end.value,
+      silent: ael.silent.checked,
+    };
+    if (!/^\d{2}:\d{2}$/.test(next.activeStart) || !/^\d{2}:\d{2}$/.test(next.activeEnd)) {
+      return formError('Enter both active hours as times, for example 08:00.');
+    }
+    ael.save.disabled = true;
+    ael.save.textContent = 'Saving…';
+    try {
+      const res = await fetch('/api/alerts/settings', {
+        method: 'PUT',
+        headers: apiHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify(next),
+      });
+      if (res.status === 401) throw new Error('account');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      alerts.settings = Object.assign({}, ALERT_DEFAULTS, data.settings);
+      renderAlerts();
+      closeForm();
+    } catch (err) {
+      formError(err.message === 'account'
+        ? 'Make an account to save alert settings.'
+        : 'Your settings could not be saved. Your earlier settings still apply. Try again.');
+    }
+    ael.save.disabled = false;
+    ael.save.textContent = 'Save';
+  }
+
+  ael.open.addEventListener('click', openForm);
+  ael.cancel.addEventListener('click', closeForm);
+  ael.form.addEventListener('submit', saveSettings);
+  ael.hours.addEventListener('change', syncHours);
+  ael.retry.addEventListener('click', () => loadAlerts());
+  ael.toastClose.addEventListener('click', hideToast);
 
   /* ── Timer, pause, error ───────────────────────────────────────────── */
   function stopTimer() {
@@ -1638,18 +2092,22 @@
     console.warn('Market simulation stopped:', err);
   }
 
-  /* ── Signal history (Riwayat) ─────────────────────────────────────────
+  /* ── Riwayat: the signal record kept for the account ──────────────────
    * Every Buy, Sell and Standby the live scan shows a signed-in viewer is
    * sent to the server, which keeps it and judges it later against its own
    * price samples. A signal's target is the next SNR level in its
    * direction (Agent 2's map, else the next zone edge), its stop 3.00
    * beyond the zone's far edge, where Agent 1 calls the zone broken.
-   * Standby takes the direction of the zone it waits on. */
+   * Standby takes the direction of the zone it waits on.
+   * History (above) is a separate record kept in this browser only. The
+   * two share the Live / History / Riwayat switch and nothing else, so
+   * every name here is riwayat-prefixed: a second `const RIWAYAT_OUTCOME` in this
+   * scope is a SyntaxError that stops the whole page. */
   const SIGNAL_MIN_TARGET = 1.0; // a target closer than this is no target
   const SIGNAL_STOP_BEYOND = 3.0; // Agent 1's "Zone broken" distance
-  const HISTORY_REFRESH_MS = 30_000;
+  const RIWAYAT_REFRESH_MS = 30_000;
   const SIGNAL_TEXT = { Buy: 'text-go', Sell: 'text-stop', Standby: 'text-wait' };
-  const OUTCOME = {
+  const RIWAYAT_OUTCOME = {
     win: { chip: 'chip chip-go', text: 'Win' },
     loss: { chip: 'chip chip-stop', text: 'Loss' },
     pending: { chip: 'chip chip-idle', text: 'Pending' },
@@ -1692,18 +2150,18 @@
     };
   }
 
-  function recordSignal() {
+  function recordRiwayat() {
     const sig = currentSignal();
     const key = sig ? sig.signal + '|' + sig.zoneName : null;
-    if (key === state.lastSignalKey) return;
-    state.lastSignalKey = key;
+    if (key === state.riwayatLastKey) return;
+    state.riwayatLastKey = key;
     if (!sig || !state.signedIn) return;
     const headers = { 'content-type': 'application/json' };
     if (liveToken) headers['x-usernode-token'] = liveToken;
     fetch('/api/signals', { method: 'POST', headers, body: JSON.stringify(sig) })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data && data.recorded && view === 'riwayat') loadHistory();
+        if (data && data.recorded && view === 'riwayat') loadRiwayat();
       })
       .catch(() => {
         // A missed record is not worth an alarm: the scan carries on and
@@ -1711,31 +2169,31 @@
       });
   }
 
-  const hist = {
-    loading: $('[data-history-loading]'),
-    error: $('[data-history-error]'),
-    retry: $('[data-history-retry]'),
-    guest: $('[data-history-guest]'),
-    join: $('[data-history-join]'),
-    body: $('[data-history-body]'),
-    stats: $('[data-history-stats]'),
-    statsPair: $('[data-stats-pair]'),
-    statsTf: $('[data-stats-tf]'),
-    count: $('[data-history-count]'),
-    list: $('[data-history-list]'),
-    empty: $('[data-history-empty]'),
+  const riwayat = {
+    loading: $('[data-riwayat-loading]'),
+    error: $('[data-riwayat-error]'),
+    retry: $('[data-riwayat-retry]'),
+    guest: $('[data-riwayat-guest]'),
+    join: $('[data-riwayat-join]'),
+    body: $('[data-riwayat-body]'),
+    stats: $('[data-riwayat-stats]'),
+    statsPair: $('[data-riwayat-stats-pair]'),
+    statsTf: $('[data-riwayat-stats-tf]'),
+    count: $('[data-riwayat-count]'),
+    list: $('[data-riwayat-list]'),
+    empty: $('[data-riwayat-empty]'),
+    openLive: $('[data-riwayat-live]'),
     loaded: false,
     busy: false,
     timer: null,
   };
-  let view = 'dashboard';
-  let booted = false; // the history waits for /api/session (demo or not)
+  let riwayatBooted = false; // the list waits for /api/session (demo or not)
 
-  function showHistoryState(which) {
-    hist.loading.hidden = which !== 'loading';
-    hist.error.hidden = which !== 'error';
-    hist.guest.hidden = which !== 'guest';
-    hist.body.hidden = which !== 'body';
+  function showRiwayatState(which) {
+    riwayat.loading.hidden = which !== 'loading';
+    riwayat.error.hidden = which !== 'error';
+    riwayat.guest.hidden = which !== 'guest';
+    riwayat.body.hidden = which !== 'body';
   }
 
   function fmtWhen(iso) {
@@ -1804,73 +2262,65 @@
       left.appendChild(res);
     }
     const chip = document.createElement('span');
-    chip.className = OUTCOME[s.outcome].chip;
-    chip.textContent = OUTCOME[s.outcome].text;
+    chip.className = RIWAYAT_OUTCOME[s.outcome].chip;
+    chip.textContent = RIWAYAT_OUTCOME[s.outcome].text;
     li.append(left, chip);
     return li;
   }
 
-  function renderHistory(data) {
+  function renderRiwayat(data) {
     if (!data.signedIn && !data.demo) {
-      showHistoryState('guest');
+      showRiwayatState('guest');
       return;
     }
-    showHistoryState('body');
+    showRiwayatState('body');
     const signals = data.signals || [];
-    hist.stats.hidden = signals.length === 0;
-    hist.list.hidden = signals.length === 0;
-    hist.empty.hidden = signals.length > 0;
-    hist.count.textContent = signals.length ? 'Latest ' + signals.length : '';
-    renderStats(hist.statsPair, data.byPair || []);
-    renderStats(hist.statsTf, data.byTimeframe || []);
-    hist.list.replaceChildren(...signals.map(renderSignalRow));
+    riwayat.stats.hidden = signals.length === 0;
+    riwayat.list.hidden = signals.length === 0;
+    riwayat.empty.hidden = signals.length > 0;
+    riwayat.count.textContent = signals.length ? 'Latest ' + signals.length : '';
+    renderStats(riwayat.statsPair, data.byPair || []);
+    renderStats(riwayat.statsTf, data.byTimeframe || []);
+    riwayat.list.replaceChildren(...signals.map(renderSignalRow));
   }
 
-  async function loadHistory() {
-    if (hist.busy) return;
-    hist.busy = true;
-    clearTimeout(hist.timer);
-    if (!hist.loaded) showHistoryState('loading');
-    hist.retry.disabled = true;
+  async function loadRiwayat() {
+    if (riwayat.busy) return;
+    riwayat.busy = true;
+    clearTimeout(riwayat.timer);
+    if (!riwayat.loaded) showRiwayatState('loading');
+    riwayat.retry.disabled = true;
     try {
       const headers = liveToken ? { 'x-usernode-token': liveToken } : {};
       const res = await fetch('/api/signals' + (state.demo ? '?demo=1' : ''), { headers });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
-      hist.loaded = true;
-      renderHistory(data);
+      riwayat.loaded = true;
+      renderRiwayat(data);
     } catch (err) {
       // Keep rows already on screen through a failed refresh; the error
       // state is only for a history that never loaded.
-      if (!hist.loaded) showHistoryState('error');
+      if (!riwayat.loaded) showRiwayatState('error');
       console.warn('Signal history unavailable:', err && err.message ? err.message : err);
     } finally {
-      hist.busy = false;
-      hist.retry.disabled = false;
-      if (view === 'riwayat') hist.timer = setTimeout(loadHistory, HISTORY_REFRESH_MS);
+      riwayat.busy = false;
+      riwayat.retry.disabled = false;
+      if (view === 'riwayat') riwayat.timer = setTimeout(loadRiwayat, RIWAYAT_REFRESH_MS);
     }
   }
 
-  // The two views. Every hash change redraws, so a link inside the app and
-  // a fresh load of the same address show the same screen.
-  function applyRoute() {
-    view = location.hash === '#riwayat' ? 'riwayat' : 'dashboard';
-    document.querySelectorAll('[data-view]').forEach((n) => {
-      n.hidden = n.dataset.view !== view;
-    });
-    document.querySelectorAll('[data-tab]').forEach((t) => {
-      t.setAttribute('aria-selected', t.dataset.tab === view ? 'true' : 'false');
-    });
-    if (view === 'riwayat' && booted) loadHistory();
-    else clearTimeout(hist.timer);
-  }
-
-  hist.retry.addEventListener('click', () => loadHistory());
-  hist.join.addEventListener('click', () => {
+  riwayat.retry.addEventListener('click', () => loadRiwayat());
+  riwayat.join.addEventListener('click', () => {
     if (window.usernode && window.usernode.askForAccount) window.usernode.askForAccount({ action: 'keep a signal history' });
   });
-  window.addEventListener('hashchange', applyRoute);
-  applyRoute(); // show the right view straight away; its data loads after boot
+  riwayat.openLive.addEventListener('click', () => setView('live'));
+  // #riwayat is Riwayat's address: a link or a check opens it there, and
+  // every hash change redraws, so moving to and from it inside the page
+  // shows what a fresh load of that address shows.
+  window.addEventListener('hashchange', () => {
+    if (location.hash === '#riwayat') setView('riwayat');
+    else if (view === 'riwayat') setView('live');
+  });
 
   /* ── Boot ──────────────────────────────────────────────────────────── */
   function backdateLog() {
@@ -1886,6 +2336,7 @@
 
   function rebuild(seed) {
     resetEngine(seed);
+    alerts.lastSent = {};
     state.h1Prev = snapshot(state.h1);
     state.m30Prev = snapshot(state.m30);
     state.m1Prev = snapshot(state.m1);
@@ -1922,9 +2373,14 @@
       el.noteDemo.hidden = false;
       // The staged demo view stays fully simulated, chart included.
       el.noteBody.textContent = 'Simulated XAUUSD prices, not a live market feed. Signals only, nothing is traded.';
-      const foot = document.querySelector('[data-footer-note]');
-      if (foot) foot.textContent = 'Agents run on simulated prices. Analysis only, nothing is traded. Not financial advice.';
+      const foot = document.querySelector('[data-foot-lead]');
+      if (foot) foot.textContent = 'Agents run on simulated prices. Analysis only, nothing is traded.';
     }
+
+    // The alert settings decide which light changes alert, so read them
+    // before the first tick (loadAlerts gives up after 5 s and keeps the
+    // defaults).
+    await loadAlerts();
 
     signals.demo = demo;
     // The view was already set before boot(): re-setting it here, after the
@@ -1934,18 +2390,20 @@
 
     buildPairOptions();
     rebuild(demo ? DEMO_SEED : Date.now());
-    booted = true;
-    applyRoute();
+    riwayatBooted = true;
+    if (view === 'riwayat') loadRiwayat();
 
     if (demo) {
       // Fast-forward synchronously to the first tick after the first green
       // verdict, so the staged screen opens populated and ready.
       let greenAt = null;
+      alerts.quietStart = true; // listed, never popped up, while fast-forwarding
       for (let i = 0; i < 200; i++) {
         tickOnce();
         if (greenAt === null && state.verdict.tone === 'go') greenAt = state.tick;
         if (greenAt !== null && state.tick > greenAt) break;
       }
+      alerts.quietStart = false;
       backdateLog();
     } else {
       addLog('SYSTEM', 'muted', 'Scan started on ' + state.pairKey + '.');
@@ -1996,7 +2454,8 @@
   // Live on every load, except a ?view=history deep link (the staging
   // screens and the checks use it); the choice is never remembered. Set
   // before boot() so no late async step can undo a tap on History.
-  setView(new URLSearchParams(location.search).get('view') === 'history' ? 'history' : 'live');
+  setView(new URLSearchParams(location.search).get('view') === 'history' ? 'history'
+    : location.hash === '#riwayat' ? 'riwayat' : 'live');
 
   boot();
 })();

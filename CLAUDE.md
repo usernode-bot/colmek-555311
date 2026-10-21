@@ -117,11 +117,12 @@ change follows it, and updates it when a request changes the look on purpose.
   housing on the Master Decision Terminal, one lit in the verdict's colour.
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
   _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- **The Live / History switch** under the header is the one segmented
-  control (`.view-switch` / `.view-tab` in the kit): two 44 px tabs on the
-  surface colour, the selected one on the raised colour. Live is today's
-  dashboard; History is the signal record and its win rate, and the scan
-  keeps running in both views.
+- **The Live / History / Riwayat switch** under the header is the one
+  segmented control (`.view-switch` / `.view-tab` in the kit): 44 px tabs on
+  the surface colour, the selected one on the raised colour. Live is today's
+  dashboard; History is the signal record kept in this browser and its win
+  rate; Riwayat is the record kept for the account on the server (`#riwayat`).
+  The scan keeps running in every view.
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components
@@ -146,8 +147,22 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
+- **Signal alerts.** The scan runs in the browser (`public/app.js`); when the
+  consensus light changes colour on a favourite pair, the page raises an alert
+  with its reason (level tested, confirming agents, risk area) and POSTs it to
+  `/api/alerts`. The same change on the same pair alerts at most once every
+  2 minutes, so edge flicker does not spam. Active hours use the device's own
+  clock. Staged-demo (`?demo=1`) alerts stay in the page and are never stored.
+- **Private tables:** `alert_settings` and `signal_alerts` are
+  `staging:private` (one person's own settings and alert history). Both are
+  keyed by `user_id` and erased by `/usernode/user-deletion`.
 - `signals` (the Riwayat history) is marked `staging:private`: each row is
   one viewer's own history, shown only to them. Rows are keyed by
   `user_id`. The browser records a signal; the server judges it (win, loss,
   pending) against its own XAU price samples. The staged demo
   (`?demo=1#riwayat`) serves a fixed history built per request, never stored.
+- **History and Riwayat are two separate records.** History (#27) keeps
+  verdict changes in this browser only (localStorage); Riwayat keeps them on
+  the server per account. They share the Live / History / Riwayat switch, so
+  Riwayat's code uses its own names (`riwayat*`, `data-riwayat-*`): never
+  reuse History's `OUTCOME`, `view`, `el.hist` or `data-history-*` hooks.
