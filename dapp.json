@@ -65,6 +65,21 @@
       "impact": [
         "public/**"
       ]
+    },
+    {
+      "id": "history.tab",
+      "name": "History tab renders",
+      "path": "/",
+      "expectSelector": "[data-view-tab=\"history\"]"
+    },
+    {
+      "id": "history.demo",
+      "name": "Demo history lists signals",
+      "path": "/?demo=1",
+      "expectSelector": "[data-history-list] [data-outcome=\"target\"]",
+      "impact": [
+        "public/**"
+      ]
     }
   ],
   "visibility": {

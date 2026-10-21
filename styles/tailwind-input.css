@@ -173,6 +173,20 @@
   .status-pill-stop { @apply bg-stop/10 text-stop; }
   .status-pill-idle { @apply bg-raised text-muted; }
 
+  /* The Live / History switch: two tabs in a strip on the surface colour,
+     the selected one on the raised colour. Each tab is 44 px tall. */
+  .view-switch {
+    @apply inline-flex gap-1 rounded-xl border border-line bg-surface p-1;
+  }
+  .view-tab {
+    @apply inline-flex min-h-11 min-w-11 items-center gap-2 rounded-lg px-4 text-body font-medium text-muted
+      hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus
+      focus-visible:ring-offset-2 focus-visible:ring-offset-ground;
+  }
+  .view-tab[aria-selected="true"] {
+    @apply bg-raised text-fg;
+  }
+
   /* The M5 mini chart on Agent 3. */
   .spark {
     @apply block w-full rounded-lg bg-raised;

@@ -104,17 +104,18 @@ shared understanding of what this app is for)_
 
 ## Design
 
-This app's look. The first real version fills in the blanks; every later
-change follows it, and updates it when a request changes the look on purpose.
+This app's look, followed by every change.
 
-- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
-  "accent: tomato red; second: basil green; neutrals: warm greys")_
-- **Signature element:** _(the one thing on screen drawn from this app's
-  subject, which no other app would have)_
-- **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
-  _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- **One fixed look:** _(only for an app drawn as its own scene, such as a
-  game: which look, and why. Otherwise delete this line.)_
+- **Palette:** accent: signal blue (the live price line, M5 marker and focus
+  ring); status colours: go green, wait amber, stop red, used only for
+  verdicts, zone kinds and route results; neutrals: cool chart-slate greys.
+  Every token has a light and a dark value in `styles/tailwind-input.css`.
+- **Signature element:** the Master Decision Terminal's three-lamp consensus
+  light beside its verdict word. The Live / History switch is the one added
+  control: two tabs in a bordered strip on the surface colour, the selected
+  one on the raised colour.
+- **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`;
+  system sans throughout, monospace only for the activity log.
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components
