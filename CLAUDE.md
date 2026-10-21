@@ -107,14 +107,21 @@ shared understanding of what this app is for)_
 This app's look. The first real version fills in the blanks; every later
 change follows it, and updates it when a request changes the look on purpose.
 
-- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
-  "accent: tomato red; second: basil green; neutrals: warm greys")_
-- **Signature element:** _(the one thing on screen drawn from this app's
-  subject, which no other app would have)_
+- **Palette:** accent: signal blue (the price marker, the M5 line, focus);
+  the trading world's traffic-light statuses carry the meaning — green
+  `go` (Ready to Execute, H1 support, Buy, Hit target), yellow `wait`
+  (Standby, watching), red `stop` (Invalid Zone, resistance, Zone broken,
+  Sell, Hit stop); neutrals: a cool chart-slate, dark by default and light
+  in the light look. Both looks follow the viewer's Homeroom theme.
+- **Signature element:** the consensus light — three stacked lamps in a
+  housing on the Master Decision Terminal, one lit in the verdict's colour.
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
   _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- **One fixed look:** _(only for an app drawn as its own scene, such as a
-  game: which look, and why. Otherwise delete this line.)_
+- **The Live / History switch** under the header is the one segmented
+  control (`.view-switch` / `.view-tab` in the kit): two 44 px tabs on the
+  surface colour, the selected one on the raised colour. Live is today's
+  dashboard; History is the signal record and its win rate, and the scan
+  keeps running in both views.
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components
