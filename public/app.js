@@ -99,6 +99,12 @@
     terminalBody: $('[data-terminal-body]'),
     lamps: {},
     verdict: $('[data-verdict]'),
+    confidence: $('[data-confidence]'),
+    levels: {
+      entry: $('[data-level-entry]'),
+      stop: $('[data-level-stop]'),
+      target: $('[data-level-target]'),
+    },
     reason: $('[data-reason]'),
     price: $('[data-price]'),
     priceNote: $('[data-price-note]'),
@@ -148,6 +154,10 @@
   }
   const now = () => (window.usernode && window.usernode.now ? window.usernode.now() : new Date());
   const fmtTime = (d) => d.toLocaleTimeString('en-GB', { hour12: false });
+  const DASH = '—';
+  function pct(n) {
+    return n == null ? DASH : n + '%';
+  }
 
   function edge(zone) {
     // The far edge: the side a sweep pierces through.
@@ -232,6 +242,8 @@
     el.lamps.go.className = 'lamp';
     el.verdict.textContent = 'Starting scan';
     el.verdict.className = 'text-title text-muted';
+    el.confidence.textContent = '';
+    renderLevels({ entry: null, stop: null, target: null });
     el.reason.textContent = 'Reading the market';
     el.price.textContent = '—';
     el.priceNote.textContent = '';
@@ -241,6 +253,7 @@
     });
     renderLadder();
     el.agents.m30.sentence.textContent = 'Reading the live feed for trendlines and levels.';
+    renderFacts(el.agents.h1.facts, []);
     renderFacts(el.agents.m30.facts, []);
     renderFacts(el.agents.m1.facts, []);
     drawSpark();
@@ -306,6 +319,7 @@
       renderChip(a, state[a]);
     });
     renderLadder();
+    renderH1Facts();
     renderM30();
     renderM1Facts();
     drawSpark();
@@ -580,20 +594,82 @@
     const entry = buy ? extreme + 0.2 : extreme - 0.2;
     const sinceExtreme = state.tick - state.episode.extremeTick;
     if (recovery >= 2.0 && sinceExtreme <= 6) {
-      return { tone: 'go', label: 'V-shape', zone: z, extreme, entry, recovery };
+      return { tone: 'go', label: 'V-shape', zone: z, extreme, entry, recovery, since: sinceExtreme };
     }
-    return { tone: 'wait', label: 'Watching wick', zone: z, extreme, entry, recovery };
+    return { tone: 'wait', label: 'Watching wick', zone: z, extreme, entry, recovery, since: sinceExtreme };
+  }
+
+  /* ── Confidence ──────────────────────────────────────────────────────
+   * How sure each agent is, and how sure the master is of its verdict.
+   * Agreement carries the most weight, then how cleanly the sweep pierced
+   * the zone and how quickly price recovered out of it. */
+  function clamp01(x) {
+    return Math.min(1, Math.max(0, x));
+  }
+  function depthScore(m30) {
+    // 0 at a 0.50 sweep through the zone's far edge, 1 at 3.00.
+    if (!m30.zone) return 0;
+    return clamp01((m30.beyond - 0.5) / 2.5);
+  }
+  function speedScore(m1) {
+    // Recovery per tick since the wick: slow at 0.33 a tick, clean at 3.00.
+    if (m1.since === undefined) return 0;
+    return clamp01((m1.recovery / Math.max(1, m1.since) - 0.33) / 2.67);
+  }
+  function confH1(a) {
+    if (a.tone === 'go') return 100 - Math.round(a.beyond / 3 * 40);
+    if (a.tone === 'wait') return Math.round(40 * (1 - a.near / 1.5));
+    return 0;
+  }
+  function confM30(m) {
+    if (m.tone === 'go') return 60 + Math.round(depthScore(m) * 40);
+    if (m.tone === 'wait') return Math.round(depthScore(m) * 40);
+    if (m.tone === 'stop') return 0;
+    return null;
+  }
+  function confM1(m) {
+    if (m.scalp) return 30; // a thin area rests on the trend alone
+    if (m.tone === 'go') return 60 + Math.round(speedScore(m) * 40);
+    if (m.tone === 'wait') return Math.round(Math.min(Math.max(0, m.recovery), 2) / 2 * 40);
+    return null;
+  }
+  function masterConfidence(h1, m30, m1) {
+    const goCount = [h1, m30, m1].filter((a) => a.tone === 'go').length;
+    return Math.min(
+      95,
+      20 * goCount +
+        Math.round(depthScore(m30) * 15) +
+        (m1.tone === 'go' ? Math.round(speedScore(m1) * 20) : 0)
+    );
   }
 
   /* ── Master decision ───────────────────────────────────────────────── */
   function evalMaster(h1, m30, m1) {
     if (h1.tone === 'go' && m30.tone === 'go' && m1.tone === 'go') {
       const z = h1.zone;
-      const dir = z.kind === 'support' ? 'Buy' : 'Sell';
+      const buy = z.kind === 'support';
+      const dir = buy ? 'Buy' : 'Sell';
+      const entry = m1.entry;
+      // Past the far edge of the tested zone, and past the sweep's wick
+      // when that went further, so the stop never sits on a price that traded.
+      const stop = buy ? Math.min(z.low, m1.extreme) - SCALP_BUF : Math.max(z.high, m1.extreme) + SCALP_BUF;
+      // The next zone of the opposite kind on Agent 1's ladder, else the
+      // scalp target distance.
+      let target = null;
+      state.pair.zones.forEach((oz) => {
+        if (buy && oz.kind === 'resistance' && oz.low > entry && (target === null || oz.low < target)) target = oz.low;
+        if (!buy && oz.kind === 'support' && oz.high < entry && (target === null || oz.high > target)) target = oz.high;
+      });
+      if (target === null) {
+        const dist = scalpSize(Math.abs(entry - stop), SCALP_TARGET);
+        target = buy ? entry + dist : entry - dist;
+      }
       return {
         tone: 'go',
         word: 'Ready to Execute',
         reason: dir + ' setup at ' + z.name + ' ' + fmt(z.low) + ' – ' + fmt(z.high),
+        confidence: masterConfidence(h1, m30, m1),
+        entry, stop, target,
       };
     }
     if (h1.tone === 'stop' || m30.tone === 'stop') {
@@ -601,13 +677,19 @@
       if (m30.tone === 'stop') reason = 'Level broken, ' + fmt(m30.beyond) + ' beyond ' + m30.zone.name;
       else if (h1.label === 'Zone broken') reason = 'H1 zone broken, no valid setup';
       else reason = 'Price mid-range, no valid zone';
-      return { tone: 'stop', word: 'Invalid Zone', reason };
+      return { tone: 'stop', word: 'Invalid Zone', reason, confidence: 0, entry: null, stop: null, target: null };
     }
     let reason;
     if (h1.tone !== 'go') reason = 'Near ' + h1.zone.name + ', no setup yet';
     else if (m30.tone === 'wait') reason = 'At ' + h1.zone.name + ', watching the level test';
     else reason = 'Level held, waiting for the M5 V-shape';
-    return { tone: 'wait', word: 'Standby', reason };
+    return {
+      tone: 'wait',
+      word: 'Standby',
+      reason,
+      confidence: masterConfidence(h1, m30, m1),
+      entry: null, stop: null, target: null,
+    };
   }
 
   /* ── Rendering ─────────────────────────────────────────────────────── */
@@ -650,6 +732,9 @@
     });
     el.verdict.textContent = state.verdict.word;
     el.verdict.className = 'text-title ' + TONE_TEXT[state.verdict.tone];
+    el.confidence.textContent = state.verdict.confidence + '% confidence';
+    el.confidence.className = 'text-small font-semibold ' + TONE_TEXT[state.verdict.tone];
+    renderLevels(state.verdict);
     el.reason.textContent = state.verdict.reason;
     el.price.textContent = fmt(state.price);
     const z = state.h1.zone;
@@ -660,6 +745,14 @@
       else note = fmt(state.h1.near) + ' from ' + z.name;
     }
     el.priceNote.textContent = note;
+  }
+  function renderLevels(lv) {
+    el.levels.entry.textContent = lv.entry == null ? DASH : fmt(lv.entry);
+    el.levels.stop.textContent = lv.stop == null ? DASH : fmt(lv.stop);
+    el.levels.target.textContent = lv.target == null ? DASH : fmt(lv.target);
+  }
+  function renderH1Facts() {
+    renderFacts(el.agents.h1.facts, [['Confidence', pct(confH1(state.h1))]]);
   }
   function renderLadder() {
     const rows = [];
@@ -745,6 +838,7 @@
     rows.push(['Trend', map.trend]);
     rows.push(['Nearest support', map.support ? fmt(map.support.level) + ' · ' + fmt(map.support.dist) + ' away' : '—']);
     rows.push(['Nearest resistance', map.resistance ? fmt(map.resistance.level) + ' · ' + fmt(map.resistance.dist) + ' away' : '—']);
+    rows.push(['Confidence', pct(confM30(m))]);
     el.agents.m30.sentence.textContent = sentence;
     renderFacts(el.agents.m30.facts, rows);
   }
@@ -768,6 +862,7 @@
       rows.push(['Entry', fmt(m.entry)]);
       rows.push(['Recovery', fmt(m.recovery)]);
     }
+    rows.push(['Confidence', pct(confM1(m))]);
     renderFacts(el.agents.m1.facts, rows);
   }
   function drawSpark() {

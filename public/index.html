@@ -162,12 +162,29 @@
             <span data-lamp="go" class="lamp"></span>
           </div>
           <div class="min-w-0">
-            <p data-verdict aria-live="polite" class="text-title text-muted">Starting scan</p>
+            <div class="flex flex-wrap items-baseline gap-x-2">
+              <p data-verdict aria-live="polite" class="text-title text-muted">Starting scan</p>
+              <span data-confidence class="text-small font-semibold text-muted"></span>
+            </div>
             <p data-reason class="text-small text-muted">Reading the market</p>
             <div class="mt-1 flex items-baseline gap-2">
               <b data-price class="text-heading">&mdash;</b>
               <span data-price-note class="min-w-0 text-small text-muted"></span>
             </div>
+            <dl data-levels class="mt-3 grid grid-cols-3 gap-2">
+              <div>
+                <dt class="text-small text-muted">Entry</dt>
+                <dd data-level-entry class="text-small font-semibold text-fg">&mdash;</dd>
+              </div>
+              <div>
+                <dt class="text-small text-muted">Stop</dt>
+                <dd data-level-stop class="text-small font-semibold text-fg">&mdash;</dd>
+              </div>
+              <div>
+                <dt class="text-small text-muted">Target</dt>
+                <dd data-level-target class="text-small font-semibold text-fg">&mdash;</dd>
+              </div>
+            </dl>
           </div>
         </div>
         <div class="mt-4 grid grid-cols-3 gap-2 border-t border-line pt-3">
@@ -259,6 +276,7 @@
             <span data-chip class="chip chip-idle">Reading</span>
           </div>
           <ul data-ladder class="rounded-xl border border-line bg-surface"></ul>
+          <dl data-facts class="mt-3 space-y-1.5 text-small"></dl>
         </article>
 
         <article class="card" data-agent="m30">

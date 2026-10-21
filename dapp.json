@@ -58,6 +58,16 @@
       ]
     },
     {
+      "id": "dashboard.confidence-levels",
+      "name": "Confidence and entry, stop, target show with a verdict",
+      "path": "/?demo=1",
+      "expectSelector": "[data-confidence]",
+      "expectText": "% confidence",
+      "impact": [
+        "public/**"
+      ]
+    },
+    {
       "id": "dashboard.agent3-scalp-area",
       "name": "Agent 3 marks a thin scalping area",
       "path": "/?demo=1",
