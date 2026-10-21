@@ -65,6 +65,18 @@
       "impact": [
         "public/**"
       ]
+    },
+    {
+      "id": "dashboard.risk-disclaimer",
+      "name": "Risk disclaimer toggle renders",
+      "path": "/",
+      "expectText": "Risk disclaimer"
+    },
+    {
+      "id": "dashboard.risk-disclaimer.demo",
+      "name": "Demo keeps the risk disclaimer",
+      "path": "/?demo=1",
+      "expectText": "Risk disclaimer"
     }
   ],
   "visibility": {

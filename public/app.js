@@ -1229,8 +1229,8 @@
       el.noteDemo.hidden = false;
       // The staged demo view stays fully simulated, chart included.
       el.noteBody.textContent = 'Simulated XAUUSD prices, not a live market feed. Signals only, nothing is traded.';
-      const foot = document.querySelector('[data-footer-note]');
-      if (foot) foot.textContent = 'Agents run on simulated prices. Analysis only, nothing is traded. Not financial advice.';
+      const foot = document.querySelector('[data-foot-lead]');
+      if (foot) foot.textContent = 'Agents run on simulated prices. Analysis only, nothing is traded.';
     }
 
     buildPairOptions();
