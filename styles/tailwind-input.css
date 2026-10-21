@@ -173,6 +173,17 @@
   .status-pill-stop { @apply bg-stop/10 text-stop; }
   .status-pill-idle { @apply bg-raised text-muted; }
 
+  /* The signal-alert pop-up: pinned above the bottom edge (clear of the
+     home indicator inside the platform frame), on the surface colour with a
+     border in the new light's colour. */
+  .alert-toast {
+    @apply fixed inset-x-4 z-50 mx-auto max-w-md rounded-xl border-2 bg-surface p-3 text-fg;
+    bottom: calc(1rem + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  }
+  .alert-toast-go { @apply border-go; }
+  .alert-toast-wait { @apply border-wait; }
+  .alert-toast-stop { @apply border-stop; }
+
   /* The M5 mini chart on Agent 3. */
   .spark {
     @apply block w-full rounded-lg bg-raised;
