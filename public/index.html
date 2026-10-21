@@ -142,6 +142,40 @@
       <span data-note-body>The Live XAUUSD price chart shows the real market, and the agents and the decision terminal read the same live price. Signals only, nothing is traded.</span>
     </p>
 
+    <!-- The light-changed banner: what changed, which level is under test,
+         who confirmed it and where the risk sits. Shown only while this page
+         is open, and only for a favorite pair inside the person's active
+         hours (see Alert settings below). -->
+    <section data-alert-banner class="order-first flex flex-col gap-3 rounded-xl border border-line bg-surface p-4 sm:flex-row sm:items-start md:col-span-3" role="status" aria-live="polite" hidden>
+      <div class="flex min-w-0 flex-1 gap-3">
+        <span data-alert-dot class="lamp mt-1.5 h-4 w-4 flex-none" aria-hidden="true"></span>
+        <div class="min-w-0 flex-1">
+          <p data-alert-title class="text-heading text-fg"></p>
+          <p data-alert-meta class="text-small text-muted"></p>
+          <p data-alert-reason class="mt-1 text-body text-fg"></p>
+          <dl class="mt-2 flex flex-col gap-1 text-small">
+            <div class="flex flex-wrap gap-x-3">
+              <dt class="text-muted">Level tested</dt>
+              <dd data-alert-level class="min-w-0"></dd>
+            </div>
+            <div class="flex flex-wrap gap-x-3">
+              <dt class="text-muted">Confirmed by</dt>
+              <dd data-alert-confirmed class="min-w-0"></dd>
+            </div>
+            <div data-alert-waiting-row class="flex flex-wrap gap-x-3" hidden>
+              <dt class="text-muted">Waiting on</dt>
+              <dd data-alert-waiting class="min-w-0"></dd>
+            </div>
+            <div class="flex flex-wrap gap-x-3">
+              <dt class="text-muted">Risk area</dt>
+              <dd data-alert-risk class="min-w-0"></dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+      <button type="button" data-alert-dismiss class="btn-secondary self-start">Dismiss</button>
+    </section>
+
     <!-- Master Decision Terminal: the consensus light (the signature
          element), the verdict, the price and the three agents' votes. On a
          phone it comes first so the answer is on the first screen. -->
@@ -315,7 +349,62 @@
       </ul>
     </section>
 
-    <p data-footer-note class="order-5 pb-6 pt-2 text-center text-small text-muted md:col-span-3">Agents read the live XAUUSD price feed. Analysis only, nothing is traded. Not financial advice.</p>
+    <!-- Alert settings: which pairs banner, when, and whether at all. The
+         choices apply to this visit as soon as Save is pressed, and are kept
+         on the person's account when they are signed in. -->
+    <section class="card order-5 flex flex-col gap-3 md:col-span-3" data-alert-settings>
+      <div class="flex items-baseline justify-between gap-2">
+        <h2 class="text-heading">Alert settings</h2>
+        <span data-alert-status class="text-small text-muted"></span>
+      </div>
+      <div data-alert-loading class="flex flex-col gap-2">
+        <span class="skeleton h-4 w-56"></span>
+        <span class="skeleton h-11 w-full"></span>
+        <span class="skeleton h-11 w-44"></span>
+      </div>
+      <div data-alert-error class="state-error" hidden>
+        <p class="text-small">Your alert settings could not be loaded. Banners use the default settings until they do.</p>
+        <button type="button" data-alert-retry class="btn-secondary">Retry</button>
+      </div>
+      <div data-alert-form class="flex flex-col gap-4" hidden>
+        <p class="text-small text-muted">A banner shows while this page is open, when the light changes on a favorite pair during your active hours.</p>
+        <div class="grid gap-4 md:grid-cols-3">
+          <fieldset class="min-w-0">
+            <legend class="section-label">Favorite pairs</legend>
+            <div data-alert-pairs class="flex flex-col"></div>
+          </fieldset>
+          <fieldset class="min-w-0">
+            <legend class="section-label">Active hours, your local time</legend>
+            <div class="flex flex-col gap-2">
+              <div class="min-w-0 flex-1">
+                <label for="alert-from" class="mb-1 block text-small text-muted">From</label>
+                <input id="alert-from" data-alert-from type="time" class="field">
+              </div>
+              <div class="min-w-0 flex-1">
+                <label for="alert-to" class="mb-1 block text-small text-muted">To</label>
+                <input id="alert-to" data-alert-to type="time" class="field">
+              </div>
+            </div>
+            <p class="mt-1 text-small text-muted">The same time in both fields means all day.</p>
+          </fieldset>
+          <div class="min-w-0">
+            <p class="section-label">Silent mode</p>
+            <label class="flex min-h-11 items-center gap-2 text-body">
+              <input data-alert-silent type="checkbox" class="h-5 w-5">
+              <span>Silent mode</span>
+            </label>
+            <p class="mt-1 text-small text-muted">No banners. The light and the Activity log still update.</p>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+          <button type="button" data-alert-save class="btn-primary">Save alert settings</button>
+          <span data-alert-message class="text-small text-muted" aria-live="polite"></span>
+        </div>
+        <p data-alert-guest class="text-small text-muted" hidden>Sign in to Homeroom to keep these settings for your next visit.</p>
+      </div>
+    </section>
+
+    <p data-footer-note class="order-6 pb-6 pt-2 text-center text-small text-muted md:col-span-3">Agents read the live XAUUSD price feed. Analysis only, nothing is traded. Not financial advice.</p>
   </main>
   <script src="/app.js" defer></script>
 </body>

@@ -139,6 +139,11 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- `alert_settings` (per-person alert choices) is private (`staging:private`),
+  keyed by `user_id`. Active hours are stored as `HH:MM` and compared against
+  the viewer's browser clock through `usernode.now()`, never a server time:
+  the staging preview's `?un-now` must move the window too.
+- The banner fires from the same verdict-change detection that writes the
+  MASTER log line, so a scan start or restart (which resets `verdictPrev`)
+  never banners. Silent mode hides the banner only; the terminal, reasons and
+  Activity log keep updating.

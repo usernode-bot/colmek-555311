@@ -65,6 +65,25 @@
       "impact": [
         "public/**"
       ]
+    },
+    {
+      "id": "dashboard.alert-settings",
+      "name": "Alert settings card renders",
+      "path": "/",
+      "expectText": "Alert settings",
+      "impact": [
+        "public/**",
+        "server.js"
+      ]
+    },
+    {
+      "id": "dashboard.alert-banner.demo",
+      "name": "A banner explains the light change",
+      "path": "/?demo=1",
+      "expectText": "Light changed: Ready to Execute",
+      "impact": [
+        "public/**"
+      ]
     }
   ],
   "visibility": {
