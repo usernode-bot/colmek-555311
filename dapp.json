@@ -58,6 +58,31 @@
       ]
     },
     {
+      "id": "dashboard.confidence-levels",
+      "name": "Confidence and entry, stop, target show with a verdict",
+      "path": "/?demo=1",
+      "expectSelector": "[data-confidence]",
+      "expectText": "% confidence",
+      "impact": [
+        "public/**"
+      ]
+    },
+    {
+      "id": "history.tab",
+      "name": "History tab renders",
+      "path": "/",
+      "expectSelector": "[data-view-tab=\"history\"]"
+    },
+    {
+      "id": "history.demo",
+      "name": "Demo history lists signals",
+      "path": "/?demo=1&view=history",
+      "expectSelector": "[data-history-list] [data-outcome=\"target\"]",
+      "impact": [
+        "public/**"
+      ]
+    },
+    {
       "id": "dashboard.agent3-scalp-area",
       "name": "Agent 3 marks a thin scalping area",
       "path": "/?demo=1",

@@ -120,7 +120,7 @@
           </div>
           <h1 class="text-title">AI Agent Trading SNR - Zero Floating Dashboard</h1>
         </div>
-        <span data-status class="status-pill status-pill-idle">STARTING</span>
+        <span data-status class="status-pill status-pill-idle">Starting</span>
       </div>
       <div class="flex flex-col items-stretch gap-2 sm:flex-row sm:items-end">
         <div class="sm:flex-1">
@@ -137,10 +137,27 @@
       </div>
     </header>
 
+    <!-- Live / History switch: Live is today's dashboard, History is the
+         signal record. The scan keeps running in both. -->
+    <div data-view-switch class="view-switch order-first md:col-span-3" role="tablist" aria-label="View">
+      <button type="button" id="view-tab-live" data-view-tab="live" role="tab" aria-selected="true" aria-controls="view-live" class="view-tab">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 16 8 11 12 13 17 7 21 9"/></svg>
+        Live
+      </button>
+      <button type="button" id="view-tab-history" data-view-tab="history" role="tab" aria-selected="false" aria-controls="view-history" class="view-tab">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><line x1="9" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="9" y1="18" x2="21" y2="18"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg>
+        History
+      </button>
+    </div>
+
     <p class="order-first rounded-lg bg-raised px-3 py-2 text-small text-muted md:col-span-3">
       <b data-note-demo hidden class="font-semibold text-fg">Staging demo:</b>
       <span data-note-body>The Live XAUUSD price chart shows the real market, and the agents and the decision terminal read the same live price. Signals only, nothing is traded.</span>
     </p>
+
+    <!-- Everything the Live view shows. display:contents keeps these
+         sections as direct grid items of <main>. -->
+    <div id="view-live" data-view-part="live" role="tabpanel" aria-labelledby="view-tab-live" class="contents">
 
     <!-- Master Decision Terminal: the consensus light (the signature
          element), the verdict, the price and the three agents' votes. On a
@@ -162,12 +179,29 @@
             <span data-lamp="go" class="lamp"></span>
           </div>
           <div class="min-w-0">
-            <p data-verdict aria-live="polite" class="text-title text-muted">Starting scan</p>
+            <div class="flex flex-wrap items-baseline gap-x-2">
+              <p data-verdict aria-live="polite" class="text-title text-muted">Starting scan</p>
+              <span data-confidence class="text-small font-semibold text-muted"></span>
+            </div>
             <p data-reason class="text-small text-muted">Reading the market</p>
             <div class="mt-1 flex items-baseline gap-2">
               <b data-price class="text-heading">&mdash;</b>
               <span data-price-note class="min-w-0 text-small text-muted"></span>
             </div>
+            <dl data-levels class="mt-3 grid grid-cols-3 gap-2">
+              <div>
+                <dt class="text-small text-muted">Entry</dt>
+                <dd data-level-entry class="text-small font-semibold text-fg">&mdash;</dd>
+              </div>
+              <div>
+                <dt class="text-small text-muted">Stop</dt>
+                <dd data-level-stop class="text-small font-semibold text-fg">&mdash;</dd>
+              </div>
+              <div>
+                <dt class="text-small text-muted">Target</dt>
+                <dd data-level-target class="text-small font-semibold text-fg">&mdash;</dd>
+              </div>
+            </dl>
           </div>
         </div>
         <div class="mt-4 grid grid-cols-3 gap-2 border-t border-line pt-3">
@@ -200,6 +234,7 @@
           </div>
         </div>
       </div>
+      <button type="button" data-feed-retry class="btn-secondary self-start" hidden>Retry</button>
     </section>
 
     <!-- Live XAUUSD price: the real gold price from the server's sampler,
@@ -326,6 +361,7 @@
             <span data-chip class="chip chip-idle">Reading</span>
           </div>
           <ul data-ladder class="rounded-xl border border-line bg-surface"></ul>
+          <dl data-facts class="mt-3 space-y-1.5 text-small"></dl>
         </article>
 
         <article class="card" data-agent="m30">
@@ -381,6 +417,46 @@
         <li class="flex gap-2 py-1"><span class="skeleton h-3 w-16 flex-none"></span><span class="skeleton h-3 w-14 flex-none"></span><span class="skeleton h-3 flex-1"></span></li>
       </ul>
     </section>
+
+    </div>
+
+    <!-- Signal history: the record of every Buy, Sell and Standby signal and
+         how it turned out, with the win rate per pair and SNR timeframe.
+         Kept in this browser only (see the Signal history block in app.js). -->
+    <div id="view-history" data-view-part="history" class="order-1 grid gap-4 md:order-3 md:col-span-3 md:grid-cols-3" role="tabpanel" aria-labelledby="view-tab-history" hidden>
+      <section class="flex flex-col gap-1">
+        <h2 class="text-heading">Win rate</h2>
+        <p class="mb-2 text-small text-muted">Finished Buy and Sell signals that hit their target before their stop. Open and Standby signals are not counted.</p>
+        <p class="section-label">By pair</p>
+        <ul data-winrate-pair class="list"></ul>
+        <p class="section-label mt-4">By SNR timeframe</p>
+        <ul data-winrate-tf class="list"></ul>
+      </section>
+
+      <section class="flex flex-col gap-2 md:col-span-2">
+        <h2 class="text-heading">Signals</h2>
+        <p class="text-small text-muted">Kept in this browser, latest 300</p>
+        <p data-history-demo class="text-small text-muted" hidden>Staging demo: sample signals, not saved.</p>
+        <p data-history-save-note class="text-small text-wait" hidden></p>
+        <div data-history-loading>
+          <ul class="list">
+            <li class="list-row flex-col items-start gap-2 py-3"><span class="skeleton h-4 w-40"></span><span class="skeleton h-3 w-56"></span></li>
+            <li class="list-row flex-col items-start gap-2 py-3"><span class="skeleton h-4 w-40"></span><span class="skeleton h-3 w-56"></span></li>
+            <li class="list-row flex-col items-start gap-2 py-3"><span class="skeleton h-4 w-40"></span><span class="skeleton h-3 w-56"></span></li>
+          </ul>
+        </div>
+        <div data-history-error class="state-error" hidden>
+          <p class="text-small">The signal history could not be read in this browser. New signals from this visit are still listed below, but they will not be kept.</p>
+          <button type="button" data-history-retry class="btn-secondary">Retry</button>
+        </div>
+        <div data-history-empty class="state-empty" hidden>
+          <p class="text-heading">No signals yet</p>
+          <p class="text-small text-muted">A signal is listed here each time the Master Decision Terminal turns to Ready to Execute or Standby.</p>
+          <button type="button" data-history-live class="btn-secondary">Open Live</button>
+        </div>
+        <ul data-history-list class="list" hidden></ul>
+      </section>
+    </div>
 
     <p data-footer-note class="order-5 pb-6 pt-2 text-center text-small text-muted md:col-span-3">Agents read the live XAUUSD price feed. Analysis only, nothing is traded. Not financial advice.</p>
   </main>

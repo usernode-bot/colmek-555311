@@ -89,6 +89,20 @@
     @apply border border-line bg-surface text-fg hover:bg-raised;
   }
 
+  /* The Live / History switch: two tabs in a strip on the surface colour,
+     the selected one on the raised colour. Each is 44 px tall. */
+  .view-switch {
+    @apply inline-flex justify-self-start gap-1 rounded-xl border border-line bg-surface p-1;
+  }
+  .view-tab {
+    @apply inline-flex min-h-11 min-w-11 items-center gap-2 rounded-lg px-4 text-body font-medium text-muted hover:text-fg
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2
+      focus-visible:ring-offset-ground;
+  }
+  .view-tab[aria-selected="true"] {
+    @apply bg-raised text-fg;
+  }
+
   /* Text inputs, selects and textareas: <input class="field">, 44 px tall.
      The placeholder is a faint hint (muted at 60%), so an example such as
      "5.0" never reads as a value somebody already typed in. */
@@ -172,6 +186,14 @@
   .status-pill-wait { @apply bg-wait/10 text-wait; }
   .status-pill-stop { @apply bg-stop/10 text-stop; }
   .status-pill-idle { @apply bg-raised text-muted; }
+  /* While the scan is running, the dot pulses: a soft ring of its own green
+     grows out of it and fades, about once every 2 s. Only the dot moves, and
+     only in place, so the pill keeps its size and the words stay put.
+     .status-pill-go is set only while running, so paused, stopped and
+     starting stay still, and reduced-motion viewers get the static dot. */
+  @media (prefers-reduced-motion: no-preference) {
+    .status-pill-go::before { animation: status-pulse 2s ease-out infinite; }
+  }
 
   /* The signal-alert pop-up: pinned above the bottom edge (clear of the
      home indicator inside the platform frame), on the surface colour with a
@@ -199,4 +221,14 @@
   @media (max-width: 767px) {
     .live-chart { height: 120px; }
   }
+}
+
+/* The running badge's dot pulse (see .status-pill-go above). The colour is
+   the --go token, so each look pulses in its own green, and the ring grows
+   only to 6 px, inside the pill's padding, without touching the text. */
+@keyframes status-pulse {
+  0%   { box-shadow: 0 0 0 0 rgb(var(--go) / 0.45); opacity: 1; }
+  50%  { opacity: 0.7; }
+  70%  { box-shadow: 0 0 0 6px rgb(var(--go) / 0); }
+  100% { box-shadow: 0 0 0 0 rgb(var(--go) / 0); opacity: 1; }
 }
