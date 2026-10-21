@@ -65,6 +65,15 @@
       "impact": [
         "public/**"
       ]
+    },
+    {
+      "id": "dashboard.verdict-confidence",
+      "name": "Verdict shows confidence",
+      "path": "/?demo=1",
+      "expectText": "% confidence",
+      "impact": [
+        "public/**"
+      ]
     }
   ],
   "visibility": {
