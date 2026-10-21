@@ -264,6 +264,100 @@ app.get('/api/session', (req, res) => {
   });
 });
 
+// ── Alert settings ──────────────────────────────────────────────────────
+// Each signed-in person's banner preferences: the pairs worth a banner, the
+// viewer's active hours and silent mode. The table is PRIVATE: one row per
+// platform user id, readable only through the routes below. A missing row
+// means "the defaults" (the page fills those in); the server never guesses
+// which pairs this app knows.
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const PAIR_RE = /^[A-Z0-9]{3,12}$/;
+let settingsReady = false;
+
+async function ensureSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS alert_settings (
+      user_id        TEXT PRIMARY KEY,
+      favorite_pairs TEXT[] NOT NULL,
+      active_from    TEXT NOT NULL DEFAULT '00:00',
+      active_to      TEXT NOT NULL DEFAULT '23:59',
+      silent         BOOLEAN NOT NULL DEFAULT false,
+      updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+  await pool.query(`COMMENT ON TABLE alert_settings IS 'staging:private'`);
+  if (IS_STAGING) {
+    // Obviously fake rows so the staging database is not empty, and nothing
+    // for the viewer: the checks must see the real "no saved settings" path.
+    await pool.query(
+      `INSERT INTO alert_settings (user_id, favorite_pairs, active_from, active_to, silent)
+       VALUES ('staging-demo-user-1', ARRAY['XAUUSD'], '00:00', '23:59', true),
+              ('staging-demo-user-2', ARRAY['XAUUSD'], '08:00', '22:00', false)
+       ON CONFLICT (user_id) DO NOTHING`
+    );
+  }
+}
+
+function settingsFromRow(row) {
+  return {
+    favoritePairs: row.favorite_pairs,
+    activeFrom: row.active_from,
+    activeTo: row.active_to,
+    silent: row.silent,
+  };
+}
+
+// Guests may read (they get the defaults, no query); every write needs an
+// account, which the auth middleware above already enforces.
+app.get('/api/settings', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!req.user) return res.json({ signedIn: false, settings: null });
+  if (!settingsReady) return res.status(503).json({ error: 'settings_unavailable' });
+  try {
+    const result = await pool.query(
+      'SELECT favorite_pairs, active_from, active_to, silent FROM alert_settings WHERE user_id = $1',
+      [req.user.id]
+    );
+    return res.json({
+      signedIn: true,
+      settings: result.rows.length ? settingsFromRow(result.rows[0]) : null,
+    });
+  } catch (err) {
+    console.warn('alert settings read failed: ' + err.message);
+    return res.status(503).json({ error: 'settings_unavailable' });
+  }
+});
+
+app.put('/api/settings', async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: 'account_required' });
+  if (!settingsReady) return res.status(503).json({ error: 'settings_unavailable' });
+  const body = req.body || {};
+  const valid = Array.isArray(body.favoritePairs)
+    && body.favoritePairs.length <= 20
+    && body.favoritePairs.every((p) => typeof p === 'string' && PAIR_RE.test(p))
+    && typeof body.activeFrom === 'string' && TIME_RE.test(body.activeFrom)
+    && typeof body.activeTo === 'string' && TIME_RE.test(body.activeTo)
+    && typeof body.silent === 'boolean';
+  if (!valid) return res.status(400).json({ error: 'invalid_settings' });
+  try {
+    const result = await pool.query(
+      `INSERT INTO alert_settings (user_id, favorite_pairs, active_from, active_to, silent, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (user_id) DO UPDATE
+         SET favorite_pairs = EXCLUDED.favorite_pairs,
+             active_from = EXCLUDED.active_from,
+             active_to = EXCLUDED.active_to,
+             silent = EXCLUDED.silent,
+             updated_at = NOW()
+       RETURNING favorite_pairs, active_from, active_to, silent`,
+      [req.user.id, body.favoritePairs, body.activeFrom, body.activeTo, body.silent]
+    );
+    return res.json({ signedIn: true, settings: settingsFromRow(result.rows[0]) });
+  } catch (err) {
+    console.warn('alert settings write failed: ' + err.message);
+    return res.status(503).json({ error: 'settings_unavailable' });
+  }
+});
+
 // The template ships no favicon file; index.html carries an inline SVG
 // icon instead. Answer 204 here so anything that still probes
 // /favicon.ico (older browsers, direct visits) doesn't fall through to
@@ -309,6 +403,15 @@ app.get('*', (req, res) => {
 });
 
 async function start() {
+  // The alert-settings table is created before the port opens. If the
+  // database is unreachable, keep serving the dashboard and the feed: the
+  // settings routes answer 503 and the page falls back to its defaults.
+  try {
+    await ensureSchema();
+    settingsReady = true;
+  } catch (err) {
+    console.warn('alert settings unavailable: ' + (err && err.message ? err.message : String(err)));
+  }
   const server = app.listen(port, () => console.log(`Listening on :${port}`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;

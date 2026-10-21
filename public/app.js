@@ -81,6 +81,18 @@
     stopped: { tone: 'stop', text: 'STOPPED' },
     starting: { tone: 'idle', text: 'STARTING' },
   };
+  // The alert banner: a card whose border takes the new verdict's colour,
+  // and a small lit dot that echoes the consensus light.
+  const BANNER = {
+    go: 'card order-first flex flex-col gap-3 border-go md:col-span-3 md:flex-row md:items-start',
+    wait: 'card order-first flex flex-col gap-3 border-wait md:col-span-3 md:flex-row md:items-start',
+    stop: 'card order-first flex flex-col gap-3 border-stop md:col-span-3 md:flex-row md:items-start',
+  };
+  const BANNER_LAMP = {
+    go: 'lamp lamp-go h-4 w-4 flex-none',
+    wait: 'lamp lamp-wait h-4 w-4 flex-none',
+    stop: 'lamp lamp-stop h-4 w-4 flex-none',
+  };
 
   const $ = (sel) => document.querySelector(sel);
   const el = {
@@ -118,6 +130,32 @@
     el.live[name] = $('[data-live-' + k + ']');
   });
   document.querySelectorAll('[data-lamp]').forEach((n) => { el.lamps[n.dataset.lamp] = n; });
+  el.alert = {
+    banner: $('[data-alert-banner]'),
+    lamp: $('[data-alert-lamp]'),
+    title: $('[data-alert-title]'),
+    meta: $('[data-alert-meta]'),
+    reason: $('[data-alert-reason]'),
+    level: $('[data-alert-level]'),
+    confirmed: $('[data-alert-confirmed]'),
+    waitingRow: $('[data-alert-waiting-row]'),
+    waiting: $('[data-alert-waiting]'),
+    risk: $('[data-alert-risk]'),
+    dismiss: $('[data-alert-dismiss]'),
+    cardMeta: $('[data-alert-card-meta]'),
+    loading: $('[data-alert-loading]'),
+    failed: $('[data-alert-failed]'),
+    retry: $('[data-alert-retry]'),
+    form: $('[data-alert-form]'),
+    pairs: $('[data-alert-pairs]'),
+    pairBoxes: {},
+    from: $('[data-alert-from]'),
+    to: $('[data-alert-to]'),
+    silent: $('[data-alert-silent]'),
+    save: $('[data-alert-save]'),
+    saved: $('[data-alert-saved]'),
+    guest: $('[data-alert-guest-note]'),
+  };
   ['h1', 'm30', 'm1'].forEach((a) => {
     const icons = {};
     ['go', 'wait', 'stop'].forEach((t) => { icons[t] = $(`[data-vote-icon="${a}-${t}"]`); });
@@ -310,6 +348,7 @@
     renderM1Facts();
     drawSpark();
     writeTickLogs();
+    renderAlertMeta(); // "Banners on" / "Outside active hours" follows the clock
     // In the staged demo the live card is drawn from the simulation, on
     // every tick, so the visual test stays deterministic.
     if (state.demo) renderLive(demoPoints(), { demo: true });
@@ -1091,6 +1130,10 @@
     });
     if (state.verdictPrev && (state.verdictPrev.tone !== state.verdict.tone || state.verdictPrev.word !== state.verdict.word)) {
       addLog('MASTER', state.verdict.tone, state.verdict.word + ' — ' + state.verdict.reason);
+      // The banner hangs off the same change detection as the log line. The
+      // verdict is unchanged on a start or restart (verdictPrev is null), so
+      // neither shows a banner.
+      if (alertAllowed()) showAlert(state.verdictPrev, state.verdict);
     }
     state.h1Prev = snapshot(state.h1);
     state.m30Prev = snapshot(state.m30);
@@ -1124,6 +1167,219 @@
     if (a.extreme != null) s += ', entry ' + fmt(a.entry);
     else if (a.scalp) s += ' ' + fmt(a.scalp.areaLow) + ' – ' + fmt(a.scalp.areaHigh) + ', entry ' + fmt(a.entry);
     return s;
+  }
+
+  /* ── Alert banner and settings ───────────────────────────────────────
+   * A banner appears while the page is open, each time the light changes,
+   * and names the level under test, the agents that confirmed it and where
+   * the setup breaks. It only speaks while the app is open: there is no
+   * phone or out-of-app notification. The settings card gates it, per pair,
+   * by local active hours, and by silent mode. */
+  const AGENT_NAMES = { h1: 'H1', m30: 'SNR', m1: 'M5' };
+  const alerts = {
+    settings: defaultSettings(),
+    signedIn: false,
+    status: 'loading', // 'loading' | 'ready' | 'error'
+  };
+
+  function defaultSettings() {
+    return { favoritePairs: Object.keys(PAIRS), activeFrom: '00:00', activeTo: '23:59', silent: false };
+  }
+
+  function normalizeSettings(raw) {
+    const d = defaultSettings();
+    if (!raw || typeof raw !== 'object') return d;
+    // A saved pair this build no longer knows is dropped: the list stays
+    // generic over PAIRS, so a new pair appears on its own.
+    const pairs = Array.isArray(raw.favoritePairs)
+      ? raw.favoritePairs.filter((k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(PAIRS, k))
+      : d.favoritePairs;
+    return {
+      favoritePairs: pairs,
+      activeFrom: typeof raw.activeFrom === 'string' ? raw.activeFrom : d.activeFrom,
+      activeTo: typeof raw.activeTo === 'string' ? raw.activeTo : d.activeTo,
+      silent: raw.silent === true,
+    };
+  }
+
+  function minutesOf(hhmm) {
+    const parts = String(hhmm).split(':');
+    return Number(parts[0]) * 60 + Number(parts[1]);
+  }
+
+  function inActiveHours(d) {
+    // The viewer's own clock, through usernode.now() (so a staging
+    // ?un-now preview reads as of the chosen moment). A window with the
+    // same time both ways is all day; one that crosses midnight runs
+    // from `from` to the end of the day and on to `to`.
+    const m = d.getHours() * 60 + d.getMinutes();
+    const from = minutesOf(alerts.settings.activeFrom);
+    const to = minutesOf(alerts.settings.activeTo);
+    if (from === to) return true;
+    if (from < to) return m >= from && m <= to;
+    return m >= from || m <= to;
+  }
+
+  function alertAllowed() {
+    if (alerts.settings.silent) return false;
+    if (alerts.settings.favoritePairs.indexOf(state.pairKey) === -1) return false;
+    return inActiveHours(now());
+  }
+
+  function alertMetaText() {
+    if (alerts.settings.silent) return 'Silent';
+    if (alerts.settings.favoritePairs.indexOf(state.pairKey) === -1) return 'Banners off for this pair';
+    if (!inActiveHours(now())) return 'Outside active hours';
+    return 'Banners on';
+  }
+
+  function renderAlertMeta() {
+    el.alert.cardMeta.textContent = alerts.status === 'loading' ? '' : alertMetaText();
+  }
+
+  function showAlert(prev, cur) {
+    const names = ['h1', 'm30', 'm1'];
+    const confirmed = names.filter((a) => state[a].tone === 'go').map((a) => AGENT_NAMES[a]);
+    const waiting = names.filter((a) => state[a].tone !== 'go').map((a) => AGENT_NAMES[a]);
+    const z = state.h1.zone;
+    const scalp = state.m1.scalp;
+    let risk;
+    if (z) {
+      risk = z.kind === 'support'
+        ? "A move below " + fmt(z.low) + ", the zone's far edge, breaks the setup"
+        : "A move above " + fmt(z.high) + ", the zone's far edge, breaks the setup";
+    } else if (scalp) {
+      risk = state.m1.label + ' ' + fmt(scalp.areaLow) + ' – ' + fmt(scalp.areaHigh) + ', stop ' + fmt(scalp.stop);
+    } else {
+      risk = 'No risk area while price is mid-range';
+    }
+    el.alert.banner.className = BANNER[cur.tone];
+    el.alert.lamp.className = BANNER_LAMP[cur.tone];
+    el.alert.title.textContent = 'Light changed: ' + cur.word;
+    el.alert.title.className = 'text-heading ' + TONE_TEXT[cur.tone];
+    el.alert.meta.textContent = 'Was ' + prev.word + '. ' + state.pairKey + ' at ' + fmtTime(now()) + '.';
+    el.alert.reason.textContent = cur.reason;
+    el.alert.level.textContent = z ? z.name + ' ' + fmt(z.low) + ' – ' + fmt(z.high) : 'No level under test';
+    el.alert.confirmed.textContent = confirmed.length ? confirmed.join(', ') : 'None yet';
+    el.alert.waitingRow.hidden = waiting.length === 0;
+    el.alert.waiting.textContent = waiting.join(', ');
+    el.alert.risk.textContent = risk;
+    el.alert.banner.hidden = false; // one banner at a time: a change replaces it
+  }
+
+  function buildAlertForm() {
+    // Built from PAIRS, like the header's pair picker, never a hardcoded
+    // pair: a pair added to PAIRS appears here on its own.
+    el.alert.pairs.replaceChildren();
+    Object.keys(PAIRS).forEach((key) => {
+      const label = document.createElement('label');
+      label.className = 'flex min-h-11 items-center gap-2 text-body';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = key;
+      box.className = 'h-4 w-4 accent-accent';
+      const text = document.createElement('span');
+      text.textContent = PAIRS[key].label;
+      label.appendChild(box);
+      label.appendChild(text);
+      el.alert.pairs.appendChild(label);
+      el.alert.pairBoxes[key] = box;
+    });
+  }
+
+  function fillAlertForm() {
+    Object.keys(el.alert.pairBoxes).forEach((key) => {
+      el.alert.pairBoxes[key].checked = alerts.settings.favoritePairs.indexOf(key) !== -1;
+    });
+    el.alert.from.value = alerts.settings.activeFrom;
+    el.alert.to.value = alerts.settings.activeTo;
+    el.alert.silent.checked = alerts.settings.silent;
+  }
+
+  function renderAlertSettings() {
+    renderAlertMeta();
+    el.alert.loading.hidden = alerts.status !== 'loading';
+    el.alert.failed.hidden = alerts.status !== 'error';
+    // Never show the form with defaults while the saved ones may still be
+    // on their way.
+    el.alert.form.hidden = alerts.status === 'loading';
+    el.alert.guest.hidden = alerts.signedIn;
+    if (alerts.status !== 'loading') fillAlertForm();
+  }
+
+  async function loadSettings() {
+    alerts.status = 'loading';
+    renderAlertSettings();
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 4000);
+    try {
+      const res = await fetch('/api/settings', {
+        headers: liveToken ? { 'x-usernode-token': liveToken } : {},
+        signal: ctl.signal,
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      alerts.signedIn = !!data.signedIn;
+      alerts.settings = normalizeSettings(data.settings);
+      alerts.status = 'ready';
+    } catch (_err) {
+      // Keep the defaults: banners run on them while the card says so.
+      alerts.settings = defaultSettings();
+      alerts.status = 'error';
+    }
+    clearTimeout(timer);
+    renderAlertSettings();
+  }
+
+  function readAlertForm() {
+    return {
+      favoritePairs: Object.keys(PAIRS).filter((k) => el.alert.pairBoxes[k] && el.alert.pairBoxes[k].checked),
+      activeFrom: el.alert.from.value || '00:00',
+      activeTo: el.alert.to.value || '23:59',
+      silent: el.alert.silent.checked,
+    };
+  }
+
+  async function saveAlertSettings(ev) {
+    ev.preventDefault();
+    // The form's choices apply right away, whether or not the save lands.
+    alerts.settings = readAlertForm();
+    if (alerts.settings.silent) el.alert.banner.hidden = true; // silent means no banners at all
+    renderAlertMeta();
+    el.alert.saved.textContent = '';
+    el.alert.save.disabled = true;
+    el.alert.save.textContent = 'Saving';
+    if (!alerts.signedIn) {
+      el.alert.saved.textContent = 'Applied for this visit. Sign in to Homeroom to keep these settings.';
+      el.alert.save.disabled = false;
+      el.alert.save.textContent = 'Save alert settings';
+      return;
+    }
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 4000);
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: Object.assign(
+          { 'content-type': 'application/json' },
+          liveToken ? { 'x-usernode-token': liveToken } : {}
+        ),
+        body: JSON.stringify(alerts.settings),
+        signal: ctl.signal,
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      alerts.settings = normalizeSettings(data.settings);
+      alerts.status = 'ready';
+      fillAlertForm();
+      el.alert.saved.textContent = 'Saved';
+    } catch (_err) {
+      el.alert.saved.textContent = 'Your settings could not be saved. They apply until you close this page.';
+    }
+    clearTimeout(timer);
+    el.alert.save.disabled = false;
+    el.alert.save.textContent = 'Save alert settings';
+    renderAlertMeta();
   }
 
   /* ── Timer, pause, error ───────────────────────────────────────────── */
@@ -1208,6 +1464,7 @@
     const token = params.get('token');
     liveToken = token;
     let demo = false;
+    let signedIn = false;
     try {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 4000);
@@ -1219,12 +1476,14 @@
       if (res.ok) {
         const data = await res.json();
         demo = !!data.demo;
+        signedIn = !!data.signedIn;
       }
     } catch (_err) {
       // No session answer: run as a normal scan. Not logged as an error —
       // the dashboard does not depend on it.
     }
     state.demo = demo;
+    alerts.signedIn = signedIn;
     if (demo) {
       el.noteDemo.hidden = false;
       // The staged demo view stays fully simulated, chart included.
@@ -1232,6 +1491,10 @@
       const foot = document.querySelector('[data-footer-note]');
       if (foot) foot.textContent = 'Agents run on simulated prices. Analysis only, nothing is traded. Not financial advice.';
     }
+
+    // The settings load before the first tick (and before the demo
+    // fast-forward), so the gate runs on the saved choices straight away.
+    await loadSettings();
 
     buildPairOptions();
     rebuild(demo ? DEMO_SEED : Date.now());
@@ -1278,6 +1541,10 @@
     if (!state.stopped) startTimer();
   });
   el.live.retry.addEventListener('click', () => retryLive());
+  el.alert.dismiss.addEventListener('click', () => { el.alert.banner.hidden = true; });
+  el.alert.retry.addEventListener('click', () => loadSettings());
+  el.alert.form.addEventListener('submit', saveAlertSettings);
 
+  buildAlertForm();
   boot();
 })();

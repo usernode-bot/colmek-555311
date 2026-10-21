@@ -139,6 +139,11 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- `alert_settings` holds each signed-in person's alert choices, keyed by
+  `user_id` (never a username) and marked private with
+  `COMMENT ON TABLE alert_settings IS 'staging:private'`. Its two
+  `staging-demo-user-*` rows are staging seed only and must never include a
+  real viewer. A missing row means the client's defaults.
+- Active hours are the viewer's browser time zone, read through
+  `usernode.now()` (never `new Date()`), so a staging `?un-now` preview sees
+  the chosen moment.
