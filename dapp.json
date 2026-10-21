@@ -65,6 +65,30 @@
       "impact": [
         "public/**"
       ]
+    },
+    {
+      "id": "riwayat.tab",
+      "name": "Riwayat tab opens",
+      "path": "/#riwayat",
+      "expectSelector": "[data-tab=riwayat][aria-selected=true]"
+    },
+    {
+      "id": "riwayat.loads",
+      "name": "Riwayat loads the viewer's real history",
+      "path": "/#riwayat",
+      "expectSelector": "[data-history-body]:not([hidden]), [data-history-guest]:not([hidden])"
+    },
+    {
+      "id": "riwayat.demo",
+      "name": "Riwayat shows win rates and judged signals",
+      "path": "/?demo=1#riwayat",
+      "expectText": "Target reached at 4,155.40",
+      "visual": true,
+      "impact": [
+        "public/**",
+        "server.js",
+        "styles/**"
+      ]
     }
   ],
   "visibility": {

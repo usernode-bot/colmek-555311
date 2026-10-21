@@ -139,6 +139,8 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- `signals` (the Riwayat history) is marked `staging:private`: each row is
+  one viewer's own history, shown only to them. Rows are keyed by
+  `user_id`. The browser records a signal; the server judges it (win, loss,
+  pending) against its own XAU price samples. The staged demo
+  (`?demo=1#riwayat`) serves a fixed history built per request, never stored.

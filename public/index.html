@@ -137,6 +137,17 @@
       </div>
     </header>
 
+
+    <!-- Two views of one app: the live dashboard and the signal history
+         (Riwayat). Hash routes (#riwayat), so a link or a check can open
+         either one; app.js redraws on every hash change. -->
+    <nav class="order-first md:col-span-3" aria-label="Views">
+      <div role="tablist" class="inline-flex gap-1 rounded-lg border border-line bg-surface p-1">
+        <a href="#dashboard" role="tab" data-tab="dashboard" aria-selected="true" class="inline-flex min-h-11 items-center rounded-md px-4 text-body font-medium text-muted hover:bg-raised aria-selected:bg-raised aria-selected:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">Dashboard</a>
+        <a href="#riwayat" role="tab" data-tab="riwayat" aria-selected="false" class="inline-flex min-h-11 items-center rounded-md px-4 text-body font-medium text-muted hover:bg-raised aria-selected:bg-raised aria-selected:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">Riwayat</a>
+      </div>
+    </nav>
+
     <p class="order-first rounded-lg bg-raised px-3 py-2 text-small text-muted md:col-span-3">
       <b data-note-demo hidden class="font-semibold text-fg">Staging demo:</b>
       <span data-note-body>The Live XAUUSD price chart shows the real market, and the agents and the decision terminal read the same live price. Signals only, nothing is traded.</span>
@@ -145,7 +156,7 @@
     <!-- Master Decision Terminal: the consensus light (the signature
          element), the verdict, the price and the three agents' votes. On a
          phone it comes first so the answer is on the first screen. -->
-    <section class="card order-1 flex flex-col gap-3 md:order-3 md:col-span-1" data-terminal>
+    <section class="card order-1 flex flex-col gap-3 md:order-3 md:col-span-1" data-terminal data-view="dashboard">
       <div class="flex items-baseline justify-between gap-2">
         <h2 class="text-heading">Master Decision Terminal</h2>
         <span data-terminal-meta class="text-small text-muted"></span>
@@ -206,7 +217,7 @@
          drawn as a bigger version of Agent 3's mini chart. In the DOM right
          after the terminal, so on a phone it follows it (both order-1); on
          md the terminal is order-3, so this card leads the screen. -->
-    <section class="card order-1 flex flex-col gap-2 md:order-1 md:col-span-3" data-live-chart>
+    <section class="card order-1 flex flex-col gap-2 md:order-1 md:col-span-3" data-live-chart data-view="dashboard">
       <div class="flex items-baseline justify-between gap-2">
         <h2 class="text-heading">Live XAUUSD price</h2>
         <span data-live-updated class="text-small text-muted"></span>
@@ -243,7 +254,7 @@
     </section>
 
     <!-- The three parallel agents, one column each on a wide screen. -->
-    <section class="order-2 md:col-span-3">
+    <section class="order-2 md:col-span-3" data-view="dashboard">
       <p class="section-label">Agents</p>
       <div class="grid gap-3 md:grid-cols-3">
 
@@ -303,7 +314,7 @@
     </section>
 
     <!-- Activity log: the terminal's printout, newest first, latest 60. -->
-    <section class="card order-3 flex flex-col gap-2 md:order-4 md:col-span-2">
+    <section class="card order-3 flex flex-col gap-2 md:order-4 md:col-span-2" data-view="dashboard">
       <div class="flex items-baseline justify-between gap-2">
         <h2 class="text-heading">Activity log</h2>
         <span class="text-small text-muted">Latest 60</span>
@@ -313,6 +324,62 @@
         <li class="flex gap-2 py-1"><span class="skeleton h-3 w-16 flex-none"></span><span class="skeleton h-3 w-14 flex-none"></span><span class="skeleton h-3 flex-1"></span></li>
         <li class="flex gap-2 py-1"><span class="skeleton h-3 w-16 flex-none"></span><span class="skeleton h-3 w-14 flex-none"></span><span class="skeleton h-3 flex-1"></span></li>
       </ul>
+    </section>
+
+
+    <!-- Riwayat: every Buy, Sell and Standby the dashboard showed this
+         viewer on the live price, judged later against the server's own
+         price samples. Win rates first, then the signals, newest first. -->
+    <section data-view="riwayat" data-history hidden class="order-2 flex flex-col gap-4 md:col-span-3">
+      <div class="flex flex-col gap-1">
+        <h2 class="text-heading">Signal history</h2>
+        <p class="text-small text-muted">A signal wins when price reaches its target, the next SNR level in its direction, and loses when price breaks 3.00 beyond its zone. Standby counts in the direction of the zone it waits on.</p>
+      </div>
+
+      <div data-history-loading class="flex flex-col gap-4">
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="skeleton h-20 w-full"></div>
+          <div class="skeleton h-20 w-full"></div>
+        </div>
+        <div class="skeleton h-48 w-full"></div>
+      </div>
+
+      <div data-history-error class="card state-error" hidden>
+        <p class="text-body font-semibold">The signal history could not be loaded.</p>
+        <p class="text-small text-muted">The dashboard still works and keeps recording signals.</p>
+        <button type="button" data-history-retry class="btn-secondary">Retry</button>
+      </div>
+
+      <div data-history-guest class="card state-empty" hidden>
+        <p class="text-body font-semibold">Your history is kept for your account</p>
+        <p class="text-small text-muted">Make an account and the dashboard records every Buy, Sell and Standby it shows you.</p>
+        <button type="button" data-history-join class="btn-primary">Make an account</button>
+      </div>
+
+      <div data-history-body hidden class="flex flex-col gap-4">
+        <div data-history-stats class="grid gap-4 md:grid-cols-2">
+          <div>
+            <p class="section-label">Win rate by pair</p>
+            <ul data-stats-pair class="list"></ul>
+          </div>
+          <div>
+            <p class="section-label">Win rate by timeframe</p>
+            <ul data-stats-tf class="list"></ul>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-baseline justify-between gap-2">
+            <p class="section-label">Signals</p>
+            <span data-history-count class="mb-2 px-1 text-small text-muted"></span>
+          </div>
+          <ul data-history-list class="list"></ul>
+          <div data-history-empty class="card state-empty" hidden>
+            <p class="text-body font-semibold">No signals yet</p>
+            <p class="text-small text-muted">Signals are recorded while the dashboard is open and shows a Buy, Sell or Standby on the live price.</p>
+            <a href="#dashboard" class="btn-primary">Open the dashboard</a>
+          </div>
+        </div>
+      </div>
     </section>
 
     <p data-footer-note class="order-5 pb-6 pt-2 text-center text-small text-muted md:col-span-3">Agents read the live XAUUSD price feed. Analysis only, nothing is traded. Not financial advice.</p>
