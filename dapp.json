@@ -90,6 +90,24 @@
       "impact": [
         "public/**"
       ]
+    },
+    {
+      "id": "alerts.card",
+      "name": "Signal alerts card renders",
+      "path": "/",
+      "expectSelector": "[data-alerts-open]"
+    },
+    {
+      "id": "alerts.demo",
+      "name": "Demo light change raises an alert with its reason",
+      "path": "/?demo=1",
+      "expectText": "Standby → Ready to Execute (Buy)"
+    },
+    {
+      "id": "alerts.demo-reason",
+      "name": "Alert names the confirming agents",
+      "path": "/?demo=1",
+      "expectText": "Agent 1 (H1 zone), Agent 2 (SNR), Agent 3 (M5)"
     }
   ],
   "visibility": {

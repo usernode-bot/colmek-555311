@@ -146,6 +146,12 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- **Signal alerts.** The scan runs in the browser (`public/app.js`); when the
+  consensus light changes colour on a favourite pair, the page raises an alert
+  with its reason (level tested, confirming agents, risk area) and POSTs it to
+  `/api/alerts`. The same change on the same pair alerts at most once every
+  2 minutes, so edge flicker does not spam. Active hours use the device's own
+  clock. Staged-demo (`?demo=1`) alerts stay in the page and are never stored.
+- **Private tables:** `alert_settings` and `signal_alerts` are
+  `staging:private` (one person's own settings and alert history). Both are
+  keyed by `user_id` and erased by `/usernode/user-deletion`.

@@ -1635,6 +1635,10 @@
     if (state.verdictPrev && (state.verdictPrev.tone !== state.verdict.tone || state.verdictPrev.word !== state.verdict.word)) {
       addLog('MASTER', state.verdict.tone, state.verdict.word + ' — ' + state.verdict.reason);
     }
+    // The light changed colour: alert, if this pair is a favourite.
+    if (state.verdictPrev && state.verdictPrev.tone !== state.verdict.tone) {
+      raiseAlert(state.verdictPrev.word);
+    }
     state.h1Prev = snapshot(state.h1);
     state.m30Prev = snapshot(state.m30);
     state.m1Prev = snapshot(state.m1);
@@ -1668,6 +1672,350 @@
     else if (a.scalp) s += ' ' + fmt(a.scalp.areaLow) + ' – ' + fmt(a.scalp.areaHigh) + ', entry ' + fmt(a.entry);
     return s;
   }
+
+  /* ── Signal alerts ─────────────────────────────────────────────────
+   * When the consensus light changes colour on a favourite pair, the page
+   * writes an alert with its reason: the level being tested, the agents
+   * that confirmed it and the risk area. Inside the active hours and with
+   * silent mode off it also pops up; otherwise it is listed quietly. The
+   * settings and the alert history are the signed-in person's own, kept on
+   * the server. Alerts from the staged demo stay in the page. */
+  const ALERT_DEFAULTS = { favouritePairs: ['XAUUSD'], activeHours: false, activeStart: '08:00', activeEnd: '22:00', silent: false };
+  const ALERT_TOAST_MS = 8000;
+  // A price hovering on a zone's edge can flip the light back and forth
+  // every few ticks. The same change on the same pair alerts at most once
+  // in this window, so the flicker does not turn into a stream of alerts.
+  const ALERT_REPEAT_MS = 120000;
+  const AGENT_NAMES = { h1: 'Agent 1 (H1 zone)', m30: 'Agent 2 (SNR)', m1: 'Agent 3 (M5)' };
+  const TOAST_TONE = { go: 'alert-toast alert-toast-go', wait: 'alert-toast alert-toast-wait', stop: 'alert-toast alert-toast-stop' };
+  const alerts = {
+    settings: Object.assign({}, ALERT_DEFAULTS),
+    pairs: Object.keys(PAIRS),
+    signedIn: false,
+    loaded: false,
+    failed: false,
+    list: [],
+    toastTimer: null,
+    quietStart: false, // true while the demo fast-forwards: list, never pop up
+    lastSent: {}, // "pair|from|to" -> when that change last alerted
+  };
+  const ael = {
+    summary: $('[data-alerts-summary]'),
+    open: $('[data-alerts-open]'),
+    form: $('[data-alerts-form]'),
+    cancel: $('[data-alerts-cancel]'),
+    save: $('[data-alerts-save]'),
+    pairs: $('[data-alerts-pairs]'),
+    hours: $('[data-alerts-hours]'),
+    start: $('[data-alerts-start]'),
+    end: $('[data-alerts-end]'),
+    silent: $('[data-alerts-silent]'),
+    formError: $('[data-alerts-form-error]'),
+    loading: $('[data-alerts-loading]'),
+    error: $('[data-alerts-error]'),
+    retry: $('[data-alerts-retry]'),
+    empty: $('[data-alerts-empty]'),
+    list: $('[data-alerts-list]'),
+    toast: $('[data-alert-toast]'),
+    toastTitle: $('[data-alert-toast-title]'),
+    toastBody: $('[data-alert-toast-body]'),
+    toastClose: $('[data-alert-toast-close]'),
+  };
+
+  function apiHeaders(extra) {
+    const h = Object.assign({}, extra || {});
+    if (liveToken) h['x-usernode-token'] = liveToken;
+    if (window.usernode && window.usernode.previewNow) h['x-usernode-now'] = now().toISOString();
+    return h;
+  }
+
+  function toMinutes(hhmm) {
+    const m = /^(\d{2}):(\d{2})$/.exec(hhmm || '');
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  }
+  // Inside the active hours, on the device's clock. A window whose end is
+  // before its start runs overnight (22:00 until 06:00).
+  function inActiveHours(settings, d) {
+    if (!settings.activeHours) return true;
+    const a = toMinutes(settings.activeStart);
+    const b = toMinutes(settings.activeEnd);
+    if (a == null || b == null || a === b) return true;
+    const t = d.getHours() * 60 + d.getMinutes();
+    return a < b ? t >= a && t < b : t >= a || t < b;
+  }
+
+  function alertWord(verdict, zone) {
+    if (verdict.tone === 'go' && zone) return verdict.word + ' (' + (zone.kind === 'support' ? 'Buy' : 'Sell') + ')';
+    return verdict.word;
+  }
+
+  // The reason for the alert, from the same readings the terminal shows.
+  function buildAlert(fromWord) {
+    const v = state.verdict;
+    const h1 = state.h1;
+    const m30 = state.m30;
+    const m1 = state.m1;
+    const zone = h1.zone || m30.zone;
+    let level;
+    if (zone) level = zone.name + ' ' + fmt(zone.low) + ' – ' + fmt(zone.high);
+    else if (m1.scalp) level = 'No H1 zone in reach. ' + m1.label + ' ' + fmt(m1.scalp.areaLow) + ' – ' + fmt(m1.scalp.areaHigh);
+    else level = 'No zone in reach, price ' + fmt(state.price) + ' is mid-range';
+
+    const yes = ['h1', 'm30', 'm1'].filter((a) => state[a].tone === 'go').map((a) => AGENT_NAMES[a]);
+    const notYet = ['h1', 'm30', 'm1'].filter((a) => state[a].tone !== 'go').map((a) => AGENT_NAMES[a]);
+    let agents = yes.length ? yes.join(', ') : 'No agent yet';
+    if (yes.length && notYet.length) agents += '. Still waiting: ' + notYet.join(', ');
+
+    let risk;
+    if (v.tone === 'go') {
+      const buy = zone.kind === 'support';
+      const voidAt = buy ? edge(zone) - 3.0 : edge(zone) + 3.0;
+      risk = 'Entry ' + fmt(m1.entry) + ', stop ' + (buy ? 'below' : 'above') + ' the wick at ' + fmt(m30.extreme) +
+        '. The setup is void past ' + fmt(voidAt) + '.';
+    } else if (v.tone === 'wait' && zone) {
+      const voidAt = zone.kind === 'support' ? edge(zone) - 3.0 : edge(zone) + 3.0;
+      risk = 'No entry yet. The level fails if price breaks past ' + fmt(voidAt) + '.';
+    } else if (v.tone === 'stop' && zone) {
+      risk = 'Level broken, price is ' + fmt(h1.beyond || m30.beyond) + ' beyond ' + zone.name + '. Stay out until it is back inside.';
+    } else {
+      risk = 'No defined risk away from a zone. Stay flat.';
+    }
+    return {
+      id: 'local-' + Date.now() + '-' + state.tick,
+      pair: state.pairKey,
+      from: fromWord,
+      to: alertWord(v, zone),
+      tone: v.tone,
+      level: level,
+      agents: agents,
+      risk: risk,
+      quiet: false,
+      at: now().toISOString(),
+    };
+  }
+
+  function raiseAlert(fromWord) {
+    const s = alerts.settings;
+    if (s.favouritePairs.indexOf(state.pairKey) === -1) return; // not a favourite: no alert
+    const alert = buildAlert(fromWord);
+    const key = alert.pair + '|' + alert.from + '|' + alert.to;
+    const at = now().getTime();
+    if (alerts.lastSent[key] != null && at - alerts.lastSent[key] < ALERT_REPEAT_MS) return;
+    alerts.lastSent[key] = at;
+    alert.quiet = s.silent || !inActiveHours(s, now());
+    alerts.list.unshift(alert);
+    if (alerts.list.length > 50) alerts.list.length = 50;
+    renderAlerts();
+    if (!alert.quiet && !alerts.quietStart) showToast(alert);
+    // Keep it for the signed-in person. The staged demo's alerts are
+    // simulated, so they stay in the page.
+    if (!state.demo && alerts.signedIn && alerts.loaded) saveAlert(alert);
+  }
+
+  async function saveAlert(alert) {
+    try {
+      const res = await fetch('/api/alerts', {
+        method: 'POST',
+        headers: apiHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify(alert),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      alert.id = data.alert.id;
+    } catch (err) {
+      // The alert is still on screen; it just will not be there next visit.
+      console.warn('Could not save the alert:', err && err.message);
+    }
+  }
+
+  function showToast(alert) {
+    ael.toastTitle.textContent = alert.pair + ': ' + alert.from + ' → ' + alert.to;
+    ael.toastBody.textContent = alert.level + '. ' + alert.risk;
+    ael.toast.className = TOAST_TONE[alert.tone];
+    ael.toast.hidden = false;
+    clearTimeout(alerts.toastTimer);
+    alerts.toastTimer = setTimeout(hideToast, ALERT_TOAST_MS);
+  }
+  function hideToast() {
+    clearTimeout(alerts.toastTimer);
+    ael.toast.hidden = true;
+  }
+
+  function summaryText() {
+    const s = alerts.settings;
+    if (!s.favouritePairs.length) return 'No favourite pairs, so no alerts. Choose one in Settings.';
+    let t = 'Alerts for ' + s.favouritePairs.join(', ');
+    if (s.silent) t += '. Silent mode is on: listed here, no pop-ups.';
+    else if (s.activeHours) t += '. Pop-ups from ' + s.activeStart + ' until ' + s.activeEnd + '.';
+    else t += '. Pop-ups at any time.';
+    return t;
+  }
+
+  function alertRow(a) {
+    const li = document.createElement('li');
+    li.className = 'flex flex-col gap-1 px-4 py-3';
+    li.dataset.alert = '';
+    const head = document.createElement('div');
+    head.className = 'flex items-baseline justify-between gap-2';
+    const title = document.createElement('p');
+    title.className = 'min-w-0 text-small font-semibold';
+    title.append(a.pair + ': ' + a.from + ' → ');
+    const to = document.createElement('span');
+    to.className = TONE_TEXT[a.tone] || 'text-muted';
+    to.textContent = a.to;
+    title.appendChild(to);
+    const time = document.createElement('span');
+    time.className = 'flex-none text-small text-muted';
+    const d = new Date(a.at);
+    time.textContent = isNaN(d) ? '' : hhmm(d) + (a.quiet ? ', quiet' : '');
+    head.appendChild(title);
+    head.appendChild(time);
+    li.appendChild(head);
+    const dl = document.createElement('dl');
+    dl.className = 'flex flex-col gap-0.5 text-small';
+    [['Level', a.level], ['Confirmed', a.agents], ['Risk', a.risk]].forEach(([k, v]) => {
+      const row = document.createElement('div');
+      row.className = 'flex gap-2';
+      const dt = document.createElement('dt');
+      dt.className = 'w-20 flex-none text-muted';
+      dt.textContent = k;
+      const dd = document.createElement('dd');
+      dd.className = 'min-w-0 flex-1';
+      dd.textContent = v;
+      row.appendChild(dt);
+      row.appendChild(dd);
+      dl.appendChild(row);
+    });
+    li.appendChild(dl);
+    return li;
+  }
+
+  function renderAlerts() {
+    ael.summary.textContent = summaryText();
+    const loading = !alerts.loaded && !alerts.failed;
+    ael.loading.hidden = !loading || alerts.list.length > 0;
+    ael.error.hidden = !alerts.failed;
+    ael.empty.hidden = !alerts.loaded || alerts.list.length > 0;
+    ael.list.hidden = alerts.list.length === 0;
+    ael.list.replaceChildren.apply(ael.list, alerts.list.map(alertRow));
+  }
+
+  async function loadAlerts() {
+    alerts.failed = false;
+    alerts.loaded = false;
+    renderAlerts();
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 5000);
+    try {
+      const opts = { headers: apiHeaders(), signal: ctl.signal };
+      const [sRes, lRes] = await Promise.all([
+        fetch('/api/alerts/settings', opts),
+        state.demo ? null : fetch('/api/alerts', opts),
+      ]);
+      if (!sRes.ok || (lRes && !lRes.ok)) throw new Error('HTTP ' + (sRes.ok ? lRes.status : sRes.status));
+      const sData = await sRes.json();
+      alerts.settings = Object.assign({}, ALERT_DEFAULTS, sData.settings);
+      if (Array.isArray(sData.pairs)) alerts.pairs = sData.pairs.filter((p) => PAIRS[p]);
+      alerts.signedIn = !!sData.signedIn;
+      if (lRes) {
+        const lData = await lRes.json();
+        // Alerts raised while the history loaded stay on top.
+        alerts.list = alerts.list.concat(lData.alerts || []).slice(0, 50);
+      }
+      alerts.loaded = true;
+    } catch (err) {
+      alerts.failed = true;
+      console.warn('Alerts could not be loaded:', err && err.message);
+    }
+    clearTimeout(timer);
+    renderAlerts();
+  }
+
+  function fillForm() {
+    const s = alerts.settings;
+    ael.pairs.replaceChildren();
+    alerts.pairs.forEach((key) => {
+      const label = document.createElement('label');
+      label.className = 'flex min-h-11 items-center gap-3 text-body';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.className = 'h-5 w-5 flex-none accent-accent';
+      box.value = key;
+      box.checked = s.favouritePairs.indexOf(key) !== -1;
+      box.dataset.alertsPair = '';
+      label.appendChild(box);
+      label.append(PAIRS[key].label);
+      ael.pairs.appendChild(label);
+    });
+    ael.hours.checked = s.activeHours;
+    ael.start.value = s.activeStart;
+    ael.end.value = s.activeEnd;
+    ael.silent.checked = s.silent;
+    syncHours();
+    ael.formError.hidden = true;
+  }
+  function syncHours() {
+    ael.start.disabled = !ael.hours.checked;
+    ael.end.disabled = !ael.hours.checked;
+  }
+  function openForm() {
+    fillForm();
+    ael.form.hidden = false;
+    ael.open.hidden = true;
+    ael.open.setAttribute('aria-expanded', 'true');
+  }
+  function closeForm() {
+    ael.form.hidden = true;
+    ael.open.hidden = false;
+    ael.open.setAttribute('aria-expanded', 'false');
+    ael.open.focus({ preventScroll: true });
+  }
+  function formError(text) {
+    ael.formError.textContent = text;
+    ael.formError.hidden = false;
+  }
+
+  async function saveSettings(ev) {
+    ev.preventDefault();
+    const next = {
+      favouritePairs: Array.from(ael.pairs.querySelectorAll('[data-alerts-pair]')).filter((b) => b.checked).map((b) => b.value),
+      activeHours: ael.hours.checked,
+      activeStart: ael.start.value,
+      activeEnd: ael.end.value,
+      silent: ael.silent.checked,
+    };
+    if (!/^\d{2}:\d{2}$/.test(next.activeStart) || !/^\d{2}:\d{2}$/.test(next.activeEnd)) {
+      return formError('Enter both active hours as times, for example 08:00.');
+    }
+    ael.save.disabled = true;
+    ael.save.textContent = 'Saving…';
+    try {
+      const res = await fetch('/api/alerts/settings', {
+        method: 'PUT',
+        headers: apiHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify(next),
+      });
+      if (res.status === 401) throw new Error('account');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      alerts.settings = Object.assign({}, ALERT_DEFAULTS, data.settings);
+      renderAlerts();
+      closeForm();
+    } catch (err) {
+      formError(err.message === 'account'
+        ? 'Make an account to save alert settings.'
+        : 'Your settings could not be saved. Your earlier settings still apply. Try again.');
+    }
+    ael.save.disabled = false;
+    ael.save.textContent = 'Save';
+  }
+
+  ael.open.addEventListener('click', openForm);
+  ael.cancel.addEventListener('click', closeForm);
+  ael.form.addEventListener('submit', saveSettings);
+  ael.hours.addEventListener('change', syncHours);
+  ael.retry.addEventListener('click', () => loadAlerts());
+  ael.toastClose.addEventListener('click', hideToast);
 
   /* ── Timer, pause, error ───────────────────────────────────────────── */
   function stopTimer() {
@@ -1741,6 +2089,7 @@
 
   function rebuild(seed) {
     resetEngine(seed);
+    alerts.lastSent = {};
     state.h1Prev = snapshot(state.h1);
     state.m30Prev = snapshot(state.m30);
     state.m1Prev = snapshot(state.m1);
@@ -1780,6 +2129,11 @@
       if (foot) foot.textContent = 'Agents run on simulated prices. Analysis only, nothing is traded. Not financial advice.';
     }
 
+    // The alert settings decide which light changes alert, so read them
+    // before the first tick (loadAlerts gives up after 5 s and keeps the
+    // defaults).
+    await loadAlerts();
+
     signals.demo = demo;
     // The view was already set before boot(): re-setting it here, after the
     // session fetch, would throw away a History the person tapped while
@@ -1793,11 +2147,13 @@
       // Fast-forward synchronously to the first tick after the first green
       // verdict, so the staged screen opens populated and ready.
       let greenAt = null;
+      alerts.quietStart = true; // listed, never popped up, while fast-forwarding
       for (let i = 0; i < 200; i++) {
         tickOnce();
         if (greenAt === null && state.verdict.tone === 'go') greenAt = state.tick;
         if (greenAt !== null && state.tick > greenAt) break;
       }
+      alerts.quietStart = false;
       backdateLog();
     } else {
       addLog('SYSTEM', 'muted', 'Scan started on ' + state.pairKey + '.');
