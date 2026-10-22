@@ -216,6 +216,8 @@
     verdict: null,
     lastPriceLog: null, // { at, price } for the "in Ns" of the price lines
     startedAt: null,
+    signedIn: false,
+    riwayatLastKey: null, // the signal last sent to Riwayat, so a held signal records once
   };
 
   function buildPairOptions() {
@@ -243,6 +245,7 @@
     state.episode = null;
     state.verdict = null;
     state.lastPriceLog = null;
+    state.riwayatLastKey = null;
     state.startedAt = now().getTime();
     state.h1 = { tone: 'stop', label: 'Mid-range', zone: null, beyond: 0, near: 0 };
     state.m30 = { tone: 'idle', label: 'No level', zone: null, extreme: null, beyond: 0 };
@@ -345,6 +348,9 @@
     renderM1Facts();
     drawSpark();
     writeTickLogs();
+    // Only a live scan feeds the history: the staged demo's prices are
+    // simulated, and its history is the server's demo set.
+    if (!state.demo) recordRiwayat();
     // In the staged demo the live card is drawn from the simulation, on
     // every tick, so the visual test stays deterministic.
     if (state.demo) renderLive(demoPoints(), { demo: true });
@@ -1103,6 +1109,17 @@
       b.tabIndex = on ? 0 : -1;
     });
     if (next === 'history') renderHistory();
+    // Riwayat loads from the server once boot knows demo or not, and
+    // refreshes while open; #riwayat in the address follows the switch.
+    if (next === 'riwayat') {
+      if (riwayatBooted) loadRiwayat();
+    } else {
+      clearTimeout(riwayat.timer);
+    }
+    const hash = next === 'riwayat' ? '#riwayat' : '';
+    if (location.hash !== hash && (hash || location.hash === '#riwayat')) {
+      window.history.replaceState(null, '', location.pathname + location.search + hash);
+    }
   }
 
   /* ── Rendering ─────────────────────────────────────────────────────── */
@@ -2075,6 +2092,236 @@
     console.warn('Market simulation stopped:', err);
   }
 
+  /* ── Riwayat: the signal record kept for the account ──────────────────
+   * Every Buy, Sell and Standby the live scan shows a signed-in viewer is
+   * sent to the server, which keeps it and judges it later against its own
+   * price samples. A signal's target is the next SNR level in its
+   * direction (Agent 2's map, else the next zone edge), its stop 3.00
+   * beyond the zone's far edge, where Agent 1 calls the zone broken.
+   * Standby takes the direction of the zone it waits on.
+   * History (above) is a separate record kept in this browser only. The
+   * two share the Live / History / Riwayat switch and nothing else, so
+   * every name here is riwayat-prefixed: a second `const RIWAYAT_OUTCOME` in this
+   * scope is a SyntaxError that stops the whole page. */
+  const SIGNAL_MIN_TARGET = 1.0; // a target closer than this is no target
+  const SIGNAL_STOP_BEYOND = 3.0; // Agent 1's "Zone broken" distance
+  const RIWAYAT_REFRESH_MS = 30_000;
+  const SIGNAL_TEXT = { Buy: 'text-go', Sell: 'text-stop', Standby: 'text-wait' };
+  const RIWAYAT_OUTCOME = {
+    win: { chip: 'chip chip-go', text: 'Win' },
+    loss: { chip: 'chip chip-stop', text: 'Loss' },
+    pending: { chip: 'chip chip-idle', text: 'Pending' },
+  };
+
+  function signalTarget(bias, price, map) {
+    const lv = bias === 'Buy' ? map.resistance : map.support;
+    if (lv && lv.dist >= SIGNAL_MIN_TARGET) return lv.level;
+    let best = null;
+    state.pair.zones.forEach((z) => {
+      [z.low, z.high].forEach((level) => {
+        const d = bias === 'Buy' ? level - price : price - level;
+        if (d >= SIGNAL_MIN_TARGET && (best === null || d < best.d)) best = { level, d };
+      });
+    });
+    return best ? best.level : null;
+  }
+
+  function currentSignal() {
+    const v = state.verdict;
+    const z = state.h1 && state.h1.zone;
+    if (!v || v.tone === 'stop' || !z || state.price == null) return null;
+    const bias = z.kind === 'support' ? 'Buy' : 'Sell';
+    const price = state.price;
+    const target = signalTarget(bias, price, state.map);
+    const stop = bias === 'Buy' ? z.low - SIGNAL_STOP_BEYOND : z.high + SIGNAL_STOP_BEYOND;
+    if (target == null) return null;
+    if (bias === 'Buy' ? !(target > price && stop < price) : !(target < price && stop > price)) return null;
+    return {
+      pair: state.pairKey,
+      timeframe: z.tf,
+      signal: v.tone === 'go' ? bias : 'Standby',
+      bias,
+      zoneName: z.name,
+      price,
+      support: state.map.support ? state.map.support.level : null,
+      resistance: state.map.resistance ? state.map.resistance.level : null,
+      target,
+      stop,
+    };
+  }
+
+  function recordRiwayat() {
+    const sig = currentSignal();
+    const key = sig ? sig.signal + '|' + sig.zoneName : null;
+    if (key === state.riwayatLastKey) return;
+    state.riwayatLastKey = key;
+    if (!sig || !state.signedIn) return;
+    const headers = { 'content-type': 'application/json' };
+    if (liveToken) headers['x-usernode-token'] = liveToken;
+    fetch('/api/signals', { method: 'POST', headers, body: JSON.stringify(sig) })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && data.recorded && view === 'riwayat') loadRiwayat();
+      })
+      .catch(() => {
+        // A missed record is not worth an alarm: the scan carries on and
+        // the next signal tries again.
+      });
+  }
+
+  const riwayat = {
+    loading: $('[data-riwayat-loading]'),
+    error: $('[data-riwayat-error]'),
+    retry: $('[data-riwayat-retry]'),
+    guest: $('[data-riwayat-guest]'),
+    join: $('[data-riwayat-join]'),
+    body: $('[data-riwayat-body]'),
+    stats: $('[data-riwayat-stats]'),
+    statsPair: $('[data-riwayat-stats-pair]'),
+    statsTf: $('[data-riwayat-stats-tf]'),
+    count: $('[data-riwayat-count]'),
+    list: $('[data-riwayat-list]'),
+    empty: $('[data-riwayat-empty]'),
+    openLive: $('[data-riwayat-live]'),
+    loaded: false,
+    busy: false,
+    timer: null,
+  };
+  let riwayatBooted = false; // the list waits for /api/session (demo or not)
+
+  function showRiwayatState(which) {
+    riwayat.loading.hidden = which !== 'loading';
+    riwayat.error.hidden = which !== 'error';
+    riwayat.guest.hidden = which !== 'guest';
+    riwayat.body.hidden = which !== 'body';
+  }
+
+  function fmtWhen(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + hhmm(d);
+  }
+  function fmtRate(r) {
+    return r == null ? '—' : Math.round(r * 100) + '%';
+  }
+  function tallyText(g) {
+    return g.wins + (g.wins === 1 ? ' win' : ' wins') + ' · ' + g.losses + (g.losses === 1 ? ' loss' : ' losses') + ' · ' + g.pending + ' pending';
+  }
+
+  function renderStats(ul, groups) {
+    ul.replaceChildren();
+    groups.forEach((g) => {
+      const li = document.createElement('li');
+      li.className = 'list-row';
+      const left = document.createElement('div');
+      left.className = 'min-w-0 flex-1';
+      const name = document.createElement('p');
+      name.className = 'text-body font-semibold';
+      name.textContent = g.key;
+      const tally = document.createElement('p');
+      tally.className = 'text-small text-muted';
+      tally.textContent = tallyText(g);
+      left.append(name, tally);
+      const rate = document.createElement('b');
+      rate.className = 'text-heading';
+      rate.textContent = fmtRate(g.winRate);
+      rate.setAttribute('aria-label', g.winRate == null ? 'No win rate yet' : 'Win rate ' + fmtRate(g.winRate));
+      li.append(left, rate);
+      ul.appendChild(li);
+    });
+  }
+
+  function renderSignalRow(s) {
+    const li = document.createElement('li');
+    li.className = 'list-row items-start';
+    li.dataset.signalRow = s.outcome;
+    const left = document.createElement('div');
+    left.className = 'min-w-0 flex-1';
+    const head = document.createElement('p');
+    head.className = 'text-body';
+    const word = document.createElement('span');
+    word.className = 'font-semibold ' + SIGNAL_TEXT[s.signal];
+    word.textContent = s.signal === 'Standby' ? 'Standby (' + s.bias.toLowerCase() + ' side)' : s.signal;
+    // The zone name carries its timeframe ("H1 support").
+    head.append(word, ' ' + s.pair + ' · ' + (s.zoneName || s.timeframe));
+    const levels = document.createElement('p');
+    levels.className = 'text-small text-muted';
+    levels.textContent = 'At ' + fmt(s.price) + ' · Target ' + fmt(s.target) + ' · Stop ' + fmt(s.stop);
+    const snr = document.createElement('p');
+    snr.className = 'text-small text-muted';
+    const parts = [];
+    if (s.support != null || s.resistance != null) {
+      parts.push('SNR ' + (s.support != null ? fmt(s.support) : '—') + ' / ' + (s.resistance != null ? fmt(s.resistance) : '—'));
+    }
+    parts.push(fmtWhen(s.createdAt));
+    snr.textContent = parts.join(' · ');
+    left.append(head, levels, snr);
+    if (s.outcome !== 'pending' && s.resolvedPrice != null) {
+      const res = document.createElement('p');
+      res.className = 'text-small text-muted';
+      res.textContent = (s.outcome === 'win' ? 'Target reached at ' : 'Stop broken at ') + fmt(s.resolvedPrice) + (s.resolvedAt ? ', ' + fmtWhen(s.resolvedAt) : '');
+      left.appendChild(res);
+    }
+    const chip = document.createElement('span');
+    chip.className = RIWAYAT_OUTCOME[s.outcome].chip;
+    chip.textContent = RIWAYAT_OUTCOME[s.outcome].text;
+    li.append(left, chip);
+    return li;
+  }
+
+  function renderRiwayat(data) {
+    if (!data.signedIn && !data.demo) {
+      showRiwayatState('guest');
+      return;
+    }
+    showRiwayatState('body');
+    const signals = data.signals || [];
+    riwayat.stats.hidden = signals.length === 0;
+    riwayat.list.hidden = signals.length === 0;
+    riwayat.empty.hidden = signals.length > 0;
+    riwayat.count.textContent = signals.length ? 'Latest ' + signals.length : '';
+    renderStats(riwayat.statsPair, data.byPair || []);
+    renderStats(riwayat.statsTf, data.byTimeframe || []);
+    riwayat.list.replaceChildren(...signals.map(renderSignalRow));
+  }
+
+  async function loadRiwayat() {
+    if (riwayat.busy) return;
+    riwayat.busy = true;
+    clearTimeout(riwayat.timer);
+    if (!riwayat.loaded) showRiwayatState('loading');
+    riwayat.retry.disabled = true;
+    try {
+      const headers = liveToken ? { 'x-usernode-token': liveToken } : {};
+      const res = await fetch('/api/signals' + (state.demo ? '?demo=1' : ''), { headers });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      riwayat.loaded = true;
+      renderRiwayat(data);
+    } catch (err) {
+      // Keep rows already on screen through a failed refresh; the error
+      // state is only for a history that never loaded.
+      if (!riwayat.loaded) showRiwayatState('error');
+      console.warn('Signal history unavailable:', err && err.message ? err.message : err);
+    } finally {
+      riwayat.busy = false;
+      riwayat.retry.disabled = false;
+      if (view === 'riwayat') riwayat.timer = setTimeout(loadRiwayat, RIWAYAT_REFRESH_MS);
+    }
+  }
+
+  riwayat.retry.addEventListener('click', () => loadRiwayat());
+  riwayat.join.addEventListener('click', () => {
+    if (window.usernode && window.usernode.askForAccount) window.usernode.askForAccount({ action: 'keep a signal history' });
+  });
+  riwayat.openLive.addEventListener('click', () => setView('live'));
+  // #riwayat is Riwayat's address: a link or a check opens it there, and
+  // every hash change redraws, so moving to and from it inside the page
+  // shows what a fresh load of that address shows.
+  window.addEventListener('hashchange', () => {
+    if (location.hash === '#riwayat') setView('riwayat');
+    else if (view === 'riwayat') setView('live');
+  });
+
   /* ── Boot ──────────────────────────────────────────────────────────── */
   function backdateLog() {
     // In demo the ticks ran instantly; stamp them as if they had taken
@@ -2115,6 +2362,7 @@
       if (res.ok) {
         const data = await res.json();
         demo = !!data.demo;
+        state.signedIn = !!data.signedIn;
       }
     } catch (_err) {
       // No session answer: run as a normal scan. Not logged as an error —
@@ -2142,6 +2390,8 @@
 
     buildPairOptions();
     rebuild(demo ? DEMO_SEED : Date.now());
+    riwayatBooted = true;
+    if (view === 'riwayat') loadRiwayat();
 
     if (demo) {
       // Fast-forward synchronously to the first tick after the first green
@@ -2204,7 +2454,8 @@
   // Live on every load, except a ?view=history deep link (the staging
   // screens and the checks use it); the choice is never remembered. Set
   // before boot() so no late async step can undo a tap on History.
-  setView(new URLSearchParams(location.search).get('view') === 'history' ? 'history' : 'live');
+  setView(new URLSearchParams(location.search).get('view') === 'history' ? 'history'
+    : location.hash === '#riwayat' ? 'riwayat' : 'live');
 
   boot();
 })();

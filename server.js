@@ -101,7 +101,7 @@ function requestNow(req) {
 // data) the platform calls these two routes with a platform token in
 // `x-usernode-platform-token`. Mounted before the sign-in check: the request
 // carries no person's sign-in token. Rows are found by the token's `id`.
-const USER_TABLES = ['alert_settings', 'signal_alerts'];
+const USER_TABLES = ['alert_settings', 'signal_alerts', 'signals'];
 function platformClaims(req, purpose) {
   const token = req.headers['x-usernode-platform-token'];
   if (!token || !JWT_PUBLIC_KEY || !APP_AUDIENCE) return null;
@@ -255,6 +255,7 @@ async function sampleXau() {
       xau.source = source.label;
       xau.lastOkAt = Date.now();
       xau.lastError = null;
+      resolveSignals('XAUUSD', price);
       if (xau.failing) {
         xau.failing = false;
         console.warn('XAU price feed recovered via ' + source.label + '.');
@@ -480,6 +481,229 @@ app.get('/api/session', (req, res) => {
   });
 });
 
+// ── Signal history ("Riwayat") ──────────────────────────────────────────
+// The scan engine runs in each viewer's browser. Whenever it shows a Buy,
+// Sell or Standby signal on the live feed, the page records it here for the
+// signed-in viewer. The server then judges every pending signal against its
+// own price samples (sampleXau above): a win once price reaches the signal's
+// target (the next SNR level in the signal's direction), a loss once price
+// breaks its stop (3.00 beyond the zone's far edge, Agent 1's "Zone broken"
+// line). Standby carries the direction of the zone it waits on. Samples are
+// 10 s apart, so a wick between two samples is not seen.
+const SIGNAL_PAIRS = new Set(['XAUUSD']);
+const SIGNAL_TFS = new Set(['M5', 'M30', 'H1', 'H4']);
+const SIGNAL_KINDS = new Set(['Buy', 'Sell', 'Standby']);
+const SIGNAL_DEDUP_MIN = 15; // the same signal at the same zone records once per 15 min
+const SIGNAL_LIST_LIMIT = 100;
+let dbReady = false; // false until migrateSignals() has run
+let resolving = false;
+
+async function migrateSignals() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS signals (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      pair TEXT NOT NULL,
+      timeframe TEXT NOT NULL,
+      signal TEXT NOT NULL,
+      bias TEXT NOT NULL,
+      zone_name TEXT,
+      price DOUBLE PRECISION NOT NULL,
+      support DOUBLE PRECISION,
+      resistance DOUBLE PRECISION,
+      target DOUBLE PRECISION NOT NULL,
+      stop DOUBLE PRECISION NOT NULL,
+      outcome TEXT NOT NULL DEFAULT 'pending',
+      resolved_price DOUBLE PRECISION,
+      resolved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+  await pool.query('CREATE INDEX IF NOT EXISTS signals_user_created ON signals (user_id, created_at DESC)');
+  await pool.query("CREATE INDEX IF NOT EXISTS signals_pending ON signals (pair) WHERE outcome = 'pending'");
+  // Each row is one viewer's own history, shown only to them: copied to
+  // staging as schema only.
+  await pool.query("COMMENT ON TABLE signals IS 'staging:private'");
+  dbReady = true;
+}
+
+// Judge the pending signals of one pair against a fresh price. A Buy wins at
+// or above its target and loses at or below its stop; a Sell mirrors it.
+async function resolveSignals(pair, price) {
+  if (!dbReady || resolving) return;
+  resolving = true;
+  try {
+    await pool.query(
+      `UPDATE signals SET
+         outcome = CASE
+           WHEN (bias = 'Buy' AND $2 >= target) OR (bias = 'Sell' AND $2 <= target) THEN 'win'
+           ELSE 'loss' END,
+         resolved_price = $2, resolved_at = NOW()
+       WHERE outcome = 'pending' AND pair = $1
+         AND ((bias = 'Buy' AND ($2 >= target OR $2 <= stop))
+           OR (bias = 'Sell' AND ($2 <= target OR $2 >= stop)))`,
+      [pair, price]
+    );
+  } catch (err) {
+    console.warn('signal resolve failed: ' + err.message);
+  } finally {
+    resolving = false;
+  }
+}
+
+function signalRow(r) {
+  return {
+    id: Number(r.id),
+    pair: r.pair,
+    timeframe: r.timeframe,
+    signal: r.signal,
+    bias: r.bias,
+    zoneName: r.zone_name,
+    price: r.price,
+    support: r.support,
+    resistance: r.resistance,
+    target: r.target,
+    stop: r.stop,
+    outcome: r.outcome,
+    resolvedPrice: r.resolved_price,
+    resolvedAt: r.resolved_at,
+    createdAt: r.created_at,
+  };
+}
+
+function groupStats(rows) {
+  return rows.map((r) => {
+    const wins = Number(r.wins);
+    const losses = Number(r.losses);
+    return {
+      key: r.key,
+      wins,
+      losses,
+      pending: Number(r.pending),
+      winRate: wins + losses > 0 ? wins / (wins + losses) : null,
+    };
+  });
+}
+
+// The staged demo's history (?demo=1 on staging only): built per request,
+// never stored, so the plain route keeps showing the viewer's real rows.
+function demoHistory(nowDate) {
+  const base = nowDate.getTime();
+  const min = 60_000;
+  const rows = [
+    ['Buy', 'Buy', 'H1 support', 4131.2, 4128.0, 4155.0, 4155.0, 4125.0, 'win', 4155.4, 26],
+    ['Standby', 'Sell', 'H1 resistance', 4176.1, 4155.0, 4177.0, 4155.0, 4185.0, 'win', 4154.8, 61],
+    ['Sell', 'Sell', 'H1 resistance', 4176.4, 4155.0, 4177.0, 4155.0, 4185.0, 'loss', 4185.3, 118],
+    ['Standby', 'Buy', 'H1 support', 4134.9, 4133.0, 4152.5, 4152.5, 4125.0, 'win', 4152.9, 170],
+    ['Buy', 'Buy', 'H1 support', 4130.6, 4128.0, 4150.0, 4150.0, 4125.0, 'win', 4150.2, 240],
+    ['Standby', 'Buy', 'H1 support', 4134.2, 4133.0, 4146.0, 4146.0, 4125.0, 'loss', 4124.6, 310],
+    ['Sell', 'Sell', 'H1 resistance', 4178.3, 4160.0, 4182.0, 4160.0, 4185.0, 'win', 4159.7, 395],
+  ];
+  const signals = [
+    {
+      id: -1, pair: 'XAUUSD', timeframe: 'H1', signal: 'Standby', bias: 'Buy', zoneName: 'H1 support',
+      price: 4134.6, support: 4133.0, resistance: 4148.0, target: 4148.0, stop: 4125.0,
+      outcome: 'pending', resolvedPrice: null, resolvedAt: null,
+      createdAt: new Date(base - 4 * min).toISOString(),
+    },
+  ].concat(rows.map((r, i) => ({
+    id: -(i + 2), pair: 'XAUUSD', timeframe: 'H1', signal: r[0], bias: r[1], zoneName: r[2],
+    price: r[3], support: r[4], resistance: r[5], target: r[6], stop: r[7],
+    outcome: r[8], resolvedPrice: r[9],
+    resolvedAt: new Date(base - (r[10] - 20) * min).toISOString(),
+    createdAt: new Date(base - r[10] * min).toISOString(),
+  })));
+  const tally = (key) => {
+    const wins = signals.filter((s) => s.outcome === 'win').length;
+    const losses = signals.filter((s) => s.outcome === 'loss').length;
+    const pending = signals.filter((s) => s.outcome === 'pending').length;
+    return [{ key, wins, losses, pending, winRate: wins / (wins + losses) }];
+  };
+  return { signals, byPair: tally('XAUUSD'), byTimeframe: tally('H1') };
+}
+
+// The viewer's history, newest first, with win rates per pair and per
+// timeframe over all of their rows. GET, so guests may read it: they have
+// no history and get an empty answer that says so.
+app.get('/api/signals', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (IS_STAGING && req.query.demo === '1') {
+    return res.json(Object.assign({ demo: true, signedIn: !!req.user }, demoHistory(req.now)));
+  }
+  if (!req.user) return res.json({ demo: false, signedIn: false, signals: [], byPair: [], byTimeframe: [] });
+  if (!dbReady) return res.status(503).json({ error: 'history_unavailable' });
+  const uid = String(req.user.id);
+  try {
+    const list = await pool.query(
+      'SELECT * FROM signals WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2',
+      [uid, SIGNAL_LIST_LIMIT]
+    );
+    const tallyCols = `COUNT(*) FILTER (WHERE outcome = 'win') AS wins,
+      COUNT(*) FILTER (WHERE outcome = 'loss') AS losses,
+      COUNT(*) FILTER (WHERE outcome = 'pending') AS pending`;
+    const byPair = await pool.query(
+      `SELECT pair AS key, ${tallyCols} FROM signals WHERE user_id = $1 GROUP BY pair ORDER BY pair`, [uid]
+    );
+    const byTf = await pool.query(
+      `SELECT timeframe AS key, ${tallyCols} FROM signals WHERE user_id = $1 GROUP BY timeframe ORDER BY timeframe`, [uid]
+    );
+    return res.json({
+      demo: false,
+      signedIn: true,
+      signals: list.rows.map(signalRow),
+      byPair: groupStats(byPair.rows),
+      byTimeframe: groupStats(byTf.rows),
+    });
+  } catch (err) {
+    console.warn('signal list failed: ' + err.message);
+    return res.status(500).json({ error: 'history_unavailable' });
+  }
+});
+
+// Record one signal the viewer's dashboard showed. The price must be close
+// to the server's own latest sample, and target and stop must sit on the
+// right sides of it, so a row can always be judged.
+app.post('/api/signals', async (req, res) => {
+  if (!dbReady) return res.status(503).json({ error: 'history_unavailable' });
+  const b = req.body || {};
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v * 100) / 100 : null);
+  const optNum = (v) => (v == null ? null : num(v));
+  const price = num(b.price);
+  const target = num(b.target);
+  const stop = num(b.stop);
+  const support = optNum(b.support);
+  const resistance = optNum(b.resistance);
+  const zoneName = typeof b.zoneName === 'string' ? b.zoneName.slice(0, 60) : null;
+  if (!SIGNAL_PAIRS.has(b.pair) || !SIGNAL_TFS.has(b.timeframe) || !SIGNAL_KINDS.has(b.signal)
+    || (b.bias !== 'Buy' && b.bias !== 'Sell') || (b.signal !== 'Standby' && b.signal !== b.bias)
+    || price == null || target == null || stop == null) {
+    return res.status(400).json({ error: 'invalid_signal' });
+  }
+  if (b.bias === 'Buy' ? !(target > price && stop < price) : !(target < price && stop > price)) {
+    return res.status(400).json({ error: 'invalid_levels' });
+  }
+  const latest = xau.points.length ? xau.points[xau.points.length - 1].p : null;
+  if (latest == null || Math.abs(price - latest) / latest > 0.01) {
+    return res.status(409).json({ error: 'price_not_live' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO signals (user_id, pair, timeframe, signal, bias, zone_name, price, support, resistance, target, stop)
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+       WHERE NOT EXISTS (
+         SELECT 1 FROM signals WHERE user_id = $1 AND pair = $2 AND signal = $4
+           AND zone_name IS NOT DISTINCT FROM $6
+           AND created_at > NOW() - make_interval(mins => $12)
+       )
+       RETURNING *`,
+      [String(req.user.id), b.pair, b.timeframe, b.signal, b.bias, zoneName, price, support, resistance, target, stop, SIGNAL_DEDUP_MIN]
+    );
+    return res.json({ recorded: rows.length > 0, signal: rows[0] ? signalRow(rows[0]) : null });
+  } catch (err) {
+    console.warn('signal record failed: ' + err.message);
+    return res.status(500).json({ error: 'record_failed' });
+  }
+});
+
 // The template ships no favicon file; index.html carries an inline SVG
 // icon instead. Answer 204 here so anything that still probes
 // /favicon.ico (older browsers, direct visits) doesn't fall through to
@@ -533,6 +757,13 @@ async function start() {
     alertsReady = true;
   } catch (err) {
     console.warn('alerts migration failed, alerts disabled: ' + err.message);
+  }
+  // The Riwayat history, on the same terms: its API answers 503 until a
+  // later boot migrates successfully.
+  try {
+    await migrateSignals();
+  } catch (err) {
+    console.warn('signal history migration failed, Riwayat disabled: ' + err.message);
   }
 
   const server = app.listen(port, () => console.log(`Listening on :${port}`));

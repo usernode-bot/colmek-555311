@@ -137,8 +137,10 @@
       </div>
     </header>
 
-    <!-- Live / History switch: Live is today's dashboard, History is the
-         signal record. The scan keeps running in both. -->
+    <!-- Live / History / Riwayat switch: Live is today's dashboard, History
+         the signal record kept in this browser, Riwayat the one kept for the
+         viewer's account on the server (#riwayat opens it). The scan keeps
+         running in all three. -->
     <div data-view-switch class="view-switch order-first md:col-span-3" role="tablist" aria-label="View">
       <button type="button" id="view-tab-live" data-view-tab="live" role="tab" aria-selected="true" aria-controls="view-live" class="view-tab">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 16 8 11 12 13 17 7 21 9"/></svg>
@@ -147,6 +149,10 @@
       <button type="button" id="view-tab-history" data-view-tab="history" role="tab" aria-selected="false" aria-controls="view-history" class="view-tab">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><line x1="9" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="9" y1="18" x2="21" y2="18"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg>
         History
+      </button>
+      <button type="button" id="view-tab-riwayat" data-view-tab="riwayat" data-tab="riwayat" role="tab" aria-selected="false" aria-controls="view-riwayat" class="view-tab">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+        Riwayat
       </button>
     </div>
 
@@ -419,6 +425,62 @@
     </section>
 
     </div>
+
+    <!-- Riwayat: every Buy, Sell and Standby the dashboard showed this
+         viewer on the live price, judged later against the server's own
+         price samples. Win rates first, then the signals, newest first. -->
+    <section id="view-riwayat" data-view-part="riwayat" data-riwayat role="tabpanel" aria-labelledby="view-tab-riwayat" hidden class="order-2 flex flex-col gap-4 md:col-span-3">
+      <div class="flex flex-col gap-1">
+        <h2 class="text-heading">Riwayat</h2>
+        <p class="text-small text-muted">Kept for your account on the server, so it follows you to any device. A signal wins when price reaches its target, the next SNR level in its direction, and loses when price breaks 3.00 beyond its zone. Standby counts in the direction of the zone it waits on.</p>
+      </div>
+
+      <div data-riwayat-loading class="flex flex-col gap-4">
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="skeleton h-20 w-full"></div>
+          <div class="skeleton h-20 w-full"></div>
+        </div>
+        <div class="skeleton h-48 w-full"></div>
+      </div>
+
+      <div data-riwayat-error class="card state-error" hidden>
+        <p class="text-body font-semibold">The signal history could not be loaded.</p>
+        <p class="text-small text-muted">The dashboard still works and keeps recording signals.</p>
+        <button type="button" data-riwayat-retry class="btn-secondary">Retry</button>
+      </div>
+
+      <div data-riwayat-guest class="card state-empty" hidden>
+        <p class="text-body font-semibold">Your history is kept for your account</p>
+        <p class="text-small text-muted">Make an account and the dashboard records every Buy, Sell and Standby it shows you.</p>
+        <button type="button" data-riwayat-join class="btn-primary">Make an account</button>
+      </div>
+
+      <div data-riwayat-body hidden class="flex flex-col gap-4">
+        <div data-riwayat-stats class="grid gap-4 md:grid-cols-2">
+          <div>
+            <p class="section-label">Win rate by pair</p>
+            <ul data-riwayat-stats-pair class="list"></ul>
+          </div>
+          <div>
+            <p class="section-label">Win rate by timeframe</p>
+            <ul data-riwayat-stats-tf class="list"></ul>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-baseline justify-between gap-2">
+            <p class="section-label">Signals</p>
+            <span data-riwayat-count class="mb-2 px-1 text-small text-muted"></span>
+          </div>
+          <ul data-riwayat-list class="list"></ul>
+          <div data-riwayat-empty class="card state-empty" hidden>
+            <p class="text-body font-semibold">No signals yet</p>
+            <p class="text-small text-muted">Signals are recorded while the dashboard is open and shows a Buy, Sell or Standby on the live price.</p>
+            <button type="button" data-riwayat-live class="btn-secondary">Open Live</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
 
     <!-- Signal history: the record of every Buy, Sell and Standby signal and
          how it turned out, with the win rate per pair and SNR timeframe.
